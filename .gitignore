@@ -1,6 +1,7 @@
 # ignore .torch files
 *.torch
 *.dot
+*.png
 
 # ignore logs and models folders
 

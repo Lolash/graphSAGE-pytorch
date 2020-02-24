@@ -1,15 +1,12 @@
-import sys
-import os
-import torch
 import argparse
-import pyhocon
-import random
 import time
-import networkx as nx
+
+import subprocess
+import pyhocon
 
 from src.dataCenter import *
-from src.utils import *
 from src.models import *
+from src.utils import *
 
 parser = argparse.ArgumentParser(description='pytorch version of GraphSAGE')
 
@@ -22,8 +19,8 @@ parser.add_argument('--gap_b_sz', type=int, default=0)
 parser.add_argument('--gumbel', type=int, default=0)
 parser.add_argument('--cut_coeff', type=float, default=1.0)
 parser.add_argument('--bal_coeff', type=float, default=1.0)
-parser.add_argument('--num_classes', type=int, default=7)
-parser.add_argument('--seed', type=int, default=566)
+parser.add_argument('--num_classes', type=int, default=0)
+parser.add_argument('--seed', type=int, default=0)
 parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
 parser.add_argument('--gcn', action='store_true')
@@ -42,6 +39,7 @@ if torch.cuda.is_available():
         print('using device', device_id, torch.cuda.get_device_name(device_id))
 
 device = torch.device("cuda" if args.cuda else "cpu")
+
 print('DEVICE:', device)
 
 
@@ -64,23 +62,44 @@ def partition_graph(nodes, name, graphsage, gap):
         if not graph.has_node(i):
             graph.add_node(i)
     colors = ['red', 'blue', 'green', 'yellow', 'pink', 'orange', 'purple']
+    partitions = {}
     for i, p in colors_dict.items():
         graph.nodes[i]['color'] = colors[p]
+        if colors[p] not in partitions:
+            partitions[colors[p]] = [i]
+        else:
+            partitions[colors[p]].append(i)
+    cardinalities = np.array([len(i) for i in partitions.values()])
+    balanced = np.array([int(len(graph.nodes) / len(partitions.keys()))] * len(cardinalities))
+    print(cardinalities)
+    print(balanced)
+    print(cardinalities - balanced)
+    balancedness = 1 - ((cardinalities - balanced) ** 2).mean()
 
-    nx.nx_pydot.write_dot(graph,
-                          "{}_{}_mb{}_e{}_ge{}_gmb{}_gumbel-{}_cut{}_bal{}_agg{}_{}.dot".format(args.dataSet,
-                                                                                                args.learn_method,
-                                                                                                args.b_sz,
-                                                                                                args.epochs,
-                                                                                                args.gap_epochs,
-                                                                                                str(args.gap_b_sz),
-                                                                                                str(args.gumbel),
-                                                                                                args.cut_coeff,
-                                                                                                args.bal_coeff,
-                                                                                                args.agg_func, name))
+    perf = nx.algorithms.community.performance(graph, partitions.values())
+    coverage = nx.algorithms.community.coverage(graph, partitions.values())
 
+    print("Performance of {}: {}".format(name, perf))
+    print("Coverage of {}: {}".format(name, coverage))
+    print("Balancedness of {}: {}".format(name, balancedness))
+
+    filename = "{}_{}_mb{}_e{}_ge{}_gmb{}_gumbel-{}_cut{}_bal{}_agg{}_{}-{}.dot".format(args.dataSet,
+                                                                                        args.learn_method,
+                                                                                        args.b_sz,
+                                                                                        args.epochs,
+                                                                                        args.gap_epochs,
+                                                                                        str(args.gap_b_sz),
+                                                                                        str(args.gumbel),
+                                                                                        args.cut_coeff,
+                                                                                        args.bal_coeff,
+                                                                                        args.agg_func, name,
+                                                                                        time.time())
+    nx.nx_pydot.write_dot(graph, filename)
+    subprocess.call([r"C:\Program Files (x86)\Graphviz2.38\bin\sfdp.exe", filename, "-Tpng", "-o", filename+".png"])
 
 if __name__ == '__main__':
+    if args.seed == 0:
+        args.seed = random.randint(100, 999)
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -123,7 +142,8 @@ if __name__ == '__main__':
     for epoch in range(args.epochs):
         print('----------------------EPOCH %d-----------------------' % epoch)
         graphSage, classification = apply_model(dataCenter, ds, graphSage, classification, unsupervised_loss, args.b_sz,
-                                                args.unsup_loss, device, args.learn_method, adj_list)
+                                                args.unsup_loss, device, args.learn_method, adj_list,
+                                                num_classes=num_labels)
     #     # if (epoch + 1) % 2 == 0 and args.learn_method == 'unsup':
     #     #     classification, args.max_vali_f1 = train_classification(dataCenter, graphSage, classification, ds, device,
     #     #                                                             args.max_vali_f1, args.name)
@@ -133,15 +153,20 @@ if __name__ == '__main__':
 
     # val_nodes = [i for i in range(0, 2708)]
     gap = train_gap(dataCenter, graphSage, classification, ds, adj_list, epochs=args.gap_epochs, b_sz=args.gap_b_sz,
-                    cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff)
+                    cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff, num_classes=num_labels, device=device)
 
     train_nodes = getattr(dataCenter, ds + "_train")
     val_nodes = getattr(dataCenter, ds + "_val")
+    train_nodes = list(train_nodes)
+    val_nodes = list(val_nodes)
+    train_nodes.extend(val_nodes)
     test_nodes = getattr(dataCenter, ds + '_test')
+    all_nodes = np.random.permutation(len(adj_list))
 
     partition_graph(train_nodes, "train", graphSage, gap)
-    partition_graph(val_nodes, "val", graphSage, gap)
+    # partition_graph(val_nodes, "val", graphSage, gap)
     partition_graph(test_nodes, "test", graphSage, gap)
+    partition_graph(all_nodes, "all", graphSage, gap)
 
     models = [graphSage, gap]
     torch.save(models,

@@ -1,19 +1,13 @@
-import sys
-import os
-import torch
-import random
 import math
+import sys
+
 import networkx as nx
-from scipy import sparse
-from torch.autograd import Variable
-import torch.nn.functional as F
-
-from sklearn.utils import shuffle
-from sklearn.metrics import f1_score
-
-import torch.nn as nn
 import numpy as np
-from torch.autograd import Variable
+import torch
+import torch.nn as nn
+from scipy import sparse
+from sklearn.metrics import f1_score
+from sklearn.utils import shuffle
 
 
 def evaluate(dataCenter, ds, graphSage, classification, device, max_vali_f1, name, cur_epoch):
@@ -118,8 +112,10 @@ def train_classification(dataCenter, graphSage, classification, ds, device, max_
         max_vali_f1 = evaluate(dataCenter, ds, graphSage, classification, device, max_vali_f1, name, epoch)
     return classification, max_vali_f1
 
+
 # b_sz=0 means to take the whole dataset in each epoch
-def train_gap(dataCenter, graphSage, classification, ds, adj_list, b_sz=0, epochs=800, cut_coeff=1, bal_coeff=1):
+def train_gap(dataCenter, graphSage, classification, ds, adj_list, num_classes, device, b_sz=0, epochs=800, cut_coeff=1,
+              bal_coeff=1):
     print('Training GAP ...')
     c_optimizer = torch.optim.Adam(classification.parameters(), lr=7.5e-5)
     # train classification, detached from the current graph
@@ -127,8 +123,6 @@ def train_gap(dataCenter, graphSage, classification, ds, adj_list, b_sz=0, epoch
     train_nodes = getattr(dataCenter, ds + '_train')
     labels = getattr(dataCenter, ds + '_labels')
     features = get_gnn_embeddings(graphSage, dataCenter, ds)
-    print("cut coeff: ", cut_coeff)
-    print("bal_coeff: ", bal_coeff)
     for epoch in range(epochs):
         train_nodes = shuffle(train_nodes)
         if b_sz == 0:
@@ -141,46 +135,12 @@ def train_gap(dataCenter, graphSage, classification, ds, adj_list, b_sz=0, epoch
             labels_batch = labels[nodes_batch]
             embs_batch = features[nodes_batch]
 
-            logists = classification(embs_batch)
-            batch_adj_list = {}
-            for node in nodes_batch:
-                batch_adj_list[int(node)] = adj_list[int(node)]
-            # print("batch_adj_list: ", batch_adj_list)
-            D = torch.tensor([len(v) for v in batch_adj_list.values()], dtype=torch.float).cuda()
-            # print("D: ", D)
-            graph = nx.Graph()
-            for i, ns in batch_adj_list.items():
-                for n in ns:
-                    if n in batch_adj_list:
-                        graph.add_edge(i, n)
-                if not graph.has_node(i):
-                    graph.add_node(i)
-
-            A = nx.adj_matrix(graph)
-            A = torch.from_numpy(sparse.coo_matrix.todense(A)).cuda()
-            # print("A: ", A)
-            gamma = logists.T @ D
-            # print("gamma: ", gamma)
-            y_div_gamma = logists / gamma
-            # print("y/gamma: ", y_div_gamma)
-            one_minus_Y_T = (1 - logists).T
-            mm = y_div_gamma @ one_minus_Y_T
-            # print("MM: ", mm)
-            times_adj_matrix = mm * A
-            # print("TIMES A: ", times_adj_matrix)
-            left_sum = times_adj_matrix.sum()
-            # print("LEFT SUM: ", left_sum)
-            num_nodes = len(nodes_batch)
-            cluster_size = torch.sum(logists, dim=0).cuda()
-            ground_truth = torch.tensor([num_nodes / float(7)] * 7).cuda()
-            mse_loss = torch.nn.modules.loss.MSELoss()
-            bal = mse_loss(ground_truth, cluster_size)
-
-            loss = cut_coeff*left_sum + bal_coeff*bal
-            # loss = -torch.sum(logists[range(logists.size(0)), labels_batch], 0)
-            # loss /= len(nodes_batch)
-            print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Dealed Nodes [{}/{}] '.format(epoch+1, epochs, index, batches, loss.item(), len(visited_nodes), len(train_nodes)))
-
+            loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes,
+                                device)
+            print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Dealed Nodes [{}/{}] '.format(epoch + 1, epochs, index,
+                                                                                            batches, loss.item(),
+                                                                                            len(visited_nodes),
+                                                                                            len(train_nodes)))
             loss.backward()
 
             nn.utils.clip_grad_norm_(classification.parameters(), 5)
@@ -191,10 +151,46 @@ def train_gap(dataCenter, graphSage, classification, ds, adj_list, b_sz=0, epoch
     return classification
 
 
+def get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes, device):
+    logists = classification(embs_batch)
+    batch_adj_list = {}
+    for node in nodes_batch:
+        batch_adj_list[int(node)] = adj_list[int(node)]
+    # print("batch_adj_list: ", batch_adj_list)
+    D = torch.tensor([len(v) for v in batch_adj_list.values()], dtype=torch.float).to(device)
+    # print("D: ", D)
+    graph = nx.Graph()
+    for i, ns in batch_adj_list.items():
+        for n in ns:
+            if n in batch_adj_list:
+                graph.add_edge(i, n)
+        if not graph.has_node(i):
+            graph.add_node(i)
+    A = nx.adj_matrix(graph)
+    A = torch.from_numpy(sparse.coo_matrix.todense(A)).to(device)
+    # print("A: ", A)
+    gamma = logists.T @ D
+    # print("gamma: ", gamma)
+    y_div_gamma = logists / gamma
+    # print("y/gamma: ", y_div_gamma)
+    one_minus_Y_T = (1 - logists).T
+    mm = y_div_gamma @ one_minus_Y_T
+    # print("MM: ", mm)
+    times_adj_matrix = mm * A
+    # print("TIMES A: ", times_adj_matrix)
+    left_sum = times_adj_matrix.sum()
+    # print("LEFT SUM: ", left_sum)
+    num_nodes = len(nodes_batch)
+    cluster_size = torch.sum(logists, dim=0).to(device)
+    ground_truth = torch.tensor([num_nodes / float(num_classes)] * num_classes).to(device)
+    mse_loss = torch.nn.modules.loss.MSELoss()
+    bal = mse_loss(ground_truth, cluster_size)
+    loss = cut_coeff * left_sum + bal_coeff * bal
+    return loss
+
+
 def apply_model(dataCenter, ds, graphSage, classification, unsupervised_loss, b_sz, unsup_loss, device, learn_method,
-                adj_list):
-    test_nodes = getattr(dataCenter, ds + '_test')
-    val_nodes = getattr(dataCenter, ds + '_val')
+                adj_list, num_classes, cut_coeff=1, bal_coeff=1):
     train_nodes = getattr(dataCenter, ds + '_train')
     labels = getattr(dataCenter, ds + '_labels')
 
@@ -246,92 +242,16 @@ def apply_model(dataCenter, ds, graphSage, classification, unsupervised_loss, b_
             loss_sup /= len(nodes_batch)
             loss = loss_sup
         elif learn_method == 'gap':
-            logists = classification(embs_batch)
-            # print(len(embs_batch))
-            # print(len(nodes_batch))
-            # print(logists.size())
-            # print("Y: ", logists)
-            batch_adj_list = {}
-            for node in nodes_batch:
-                batch_adj_list[int(node)] = adj_list[int(node)]
-            # print("batch_adj_list: ", batch_adj_list)
-            D = torch.tensor([len(v) for v in batch_adj_list.values()], dtype=torch.float).cuda()
-            # print("D: ", D)
-            graph = nx.Graph()
-            for i, ns in batch_adj_list.items():
-                for n in ns:
-                    if n in batch_adj_list:
-                        graph.add_edge(i, n)
-                if not graph.has_node(i):
-                    graph.add_node(i)
-
-            A = nx.adj_matrix(graph)
-            A = torch.from_numpy(sparse.coo_matrix.todense(A)).cuda()
-            # print("A: ", A)
-            gamma = logists.T @ D
-            # print("gamma: ", gamma)
-            y_div_gamma = logists / gamma
-            # print("y/gamma: ", y_div_gamma)
-            one_minus_Y_T = (1 - logists).T
-            mm = y_div_gamma @ one_minus_Y_T
-            # print("MM: ", mm)
-            times_adj_matrix = mm * A
-            # print("TIMES A: ", times_adj_matrix)
-            left_sum = times_adj_matrix.sum()
-            # print("LEFT SUM: ", left_sum)
-            num_nodes = len(nodes_batch)
-            cluster_size = torch.sum(logists, dim=0).cuda()
-            ground_truth = torch.tensor([num_nodes / float(7)] * 7).cuda()
-            mse_loss = torch.nn.modules.loss.MSELoss()
-            bal = mse_loss(ground_truth, cluster_size)
-
-            loss = left_sum + bal
-
+            loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes)
         elif learn_method == 'gap_plus':
             print("GAP PLUS")
-            logists = classification(embs_batch)
-            # print(len(embs_batch))
-            # print(len(nodes_batch))
-            # print(logists.size())
-            # print("Y: ", logists)
-            batch_adj_list = {}
-            for node in nodes_batch:
-                batch_adj_list[int(node)] = adj_list[int(node)]
-            # print("batch_adj_list: ", batch_adj_list)
-            D = torch.tensor([len(v) for v in batch_adj_list.values()], dtype=torch.float).cuda()
-            # print("D: ", D)
-            graph = nx.Graph()
-            for i, ns in batch_adj_list.items():
-                for n in ns:
-                    if n in batch_adj_list:
-                        graph.add_edge(i, n)
-                if not graph.has_node(i):
-                    graph.add_node(i)
-
-            A = nx.adj_matrix(graph)
-            A = torch.from_numpy(sparse.coo_matrix.todense(A)).cuda()
-            # print("A: ", A)
-            gamma = logists.T @ D
-            # print("gamma: ", gamma)
-            y_div_gamma = logists / gamma
-            # print("y/gamma: ", y_div_gamma)
-            one_minus_Y_T = (1 - logists).T
-            mm = y_div_gamma @ one_minus_Y_T
-            # print("MM: ", mm)
-            times_adj_matrix = mm * A
-            # print("TIMES A: ", times_adj_matrix)
-            left_sum = times_adj_matrix.sum()
-            # print("LEFT SUM: ", left_sum)
-            num_nodes = len(nodes_batch)
-            cluster_size = torch.sum(logists, dim=0).cuda()
-            ground_truth = torch.tensor([num_nodes / float(7)] * 7).cuda()
-            mse_loss = torch.nn.modules.loss.MSELoss()
-            bal = mse_loss(ground_truth, cluster_size)
+            gap_loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch,
+                                    num_classes)
             if unsup_loss == 'margin':
                 loss_net = unsupervised_loss.get_loss_margin(embs_batch, nodes_batch)
             elif unsup_loss == 'normal':
                 loss_net = unsupervised_loss.get_loss_sage(embs_batch, nodes_batch)
-            loss = loss_net + left_sum + bal
+            loss = loss_net + gap_loss
 
         elif learn_method == 'plus_unsup':
             # superivsed learning

@@ -38,16 +38,15 @@ if torch.cuda.is_available():
         device_id = torch.cuda.current_device()
         print('using device', device_id, torch.cuda.get_device_name(device_id))
 
-device = torch.device("cuda" if args.cuda else "cpu")
-
+# device = torch.device("cuda" if args.cuda else "cpu")
+device = torch.device("cpu")
 print('DEVICE:', device)
 
 
-def partition_graph(nodes, name, graphsage, gap):
-    embs = graphsage(nodes)
+def partition_graph(nodes, features, adj_list, name, graphsage, gap):
+    embs = graphsage(nodes, features, adj_list)
     logists = gap(embs)
     _, predicts = torch.max(logists, 1)
-    print(predicts.size())
     graph = nx.Graph()
     val_adj_list = {}
     colors_dict = {}
@@ -95,7 +94,8 @@ def partition_graph(nodes, name, graphsage, gap):
                                                                                         args.agg_func, name,
                                                                                         time.time())
     nx.nx_pydot.write_dot(graph, filename)
-    subprocess.call([r"C:\Program Files (x86)\Graphviz2.38\bin\sfdp.exe", filename, "-Tpng", "-o", filename+".png"])
+    subprocess.call([r"C:\Program Files (x86)\Graphviz2.38\bin\sfdp.exe", filename, "-Tpng", "-o", filename + ".png"])
+
 
 if __name__ == '__main__':
     if args.seed == 0:
@@ -113,22 +113,33 @@ if __name__ == '__main__':
     dataCenter = DataCenter(config)
     dataCenter.load_dataSet(ds)
     features = torch.FloatTensor(getattr(dataCenter, ds + '_feats')).to(device)
+    features_train = torch.FloatTensor(getattr(dataCenter, ds + '_feats_train')).to(device)
+    features_test = torch.FloatTensor(getattr(dataCenter, ds + '_feats_test')).to(device)
+    features_val = torch.FloatTensor(getattr(dataCenter, ds + '_feats_val')).to(device)
 
-    adj_list = getattr(dataCenter, ds + '_adj_lists')
-    graphSage = GraphSage(config['setting.num_layers'], features.size(1), config['setting.hidden_emb_size'], features,
-                          adj_list, device, gcn=args.gcn, agg_func=args.agg_func)
+    # self, num_layers, input_size, out_size, device, gcn=False, agg_func='MEAN')
+    adj_list = getattr(dataCenter, ds + '_adj_list')
+    adj_list_train = getattr(dataCenter, ds + '_adj_list_train')
+    adj_list_val = getattr(dataCenter, ds + '_adj_list_val')
+    adj_list_test = getattr(dataCenter, ds + '_adj_list_test')
+
+    train_nodes = getattr(dataCenter, ds + "_train")
+    val_nodes = getattr(dataCenter, ds + "_val")
+    test_nodes = getattr(dataCenter, ds + '_test')
+
+    graphSage = GraphSage(config['setting.num_layers'], features.size(1), config['setting.hidden_emb_size'],
+                          device,
+                          gcn=args.gcn, agg_func=args.agg_func)
     graphSage.to(device)
 
     if args.num_classes == 0:
         num_labels = len(set(getattr(dataCenter, ds + '_labels')))
     else:
         num_labels = args.num_classes
-    print(args.gumbel)
-    classification = Classification(config['setting.hidden_emb_size'], num_labels, gumbel=args.gumbel)
-    classification.to(device)
+    gap = Classification(config['setting.hidden_emb_size'], num_labels, gumbel=args.gumbel)
+    gap.to(device)
 
-    unsupervised_loss = UnsupervisedLoss(getattr(dataCenter, ds + '_adj_lists'), getattr(dataCenter, ds + '_train'),
-                                         device)
+    unsupervised_loss = UnsupervisedLoss(adj_list_train, train_nodes, device)
 
     if args.learn_method == 'sup':
         print('GraphSage with Supervised Learning')
@@ -141,34 +152,32 @@ if __name__ == '__main__':
     print("bal_coeff: ", args.bal_coeff)
     for epoch in range(args.epochs):
         print('----------------------EPOCH %d-----------------------' % epoch)
-        graphSage, classification = apply_model(dataCenter, ds, graphSage, classification, unsupervised_loss, args.b_sz,
-                                                args.unsup_loss, device, args.learn_method, adj_list,
-                                                num_classes=num_labels)
-    #     # if (epoch + 1) % 2 == 0 and args.learn_method == 'unsup':
-    #     #     classification, args.max_vali_f1 = train_classification(dataCenter, graphSage, classification, ds, device,
-    #     #                                                             args.max_vali_f1, args.name)
-    #     # if args.learn_method != 'unsup':
-    #     args.max_vali_f1 = evaluate(dataCenter, ds, graphSage, classification, device, args.max_vali_f1, args.name,
-    #                                 epoch)
+        graphSage, gap = apply_model(train_nodes, features, graphSage, gap,
+                                     unsupervised_loss,
+                                     args.b_sz,
+                                     args.unsup_loss, device, args.learn_method, adj_list_train, num_classes=num_labels)
+        # if (epoch + 1) % 2 == 0 and args.learn_method == 'unsup':
+        #     classification, args.max_vali_f1 = train_classification(dataCenter, graphSage, classification, ds, device,
+        #                                                             args.max_vali_f1, args.name)
+        # if args.learn_method != 'unsup':
+        val_nodes = getattr(dataCenter, ds + "_val")
+        args.max_vali_f1 = evaluate(adj_list_val, val_nodes, features, graphSage, gap, args.bal_coeff, args.cut_coeff, num_labels,
+                                    device, args)
 
     # val_nodes = [i for i in range(0, 2708)]
-    gap = train_gap(dataCenter, graphSage, classification, ds, adj_list, epochs=args.gap_epochs, b_sz=args.gap_b_sz,
-                    cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff, num_classes=num_labels, device=device)
 
-    train_nodes = getattr(dataCenter, ds + "_train")
-    val_nodes = getattr(dataCenter, ds + "_val")
-    train_nodes = list(train_nodes)
-    val_nodes = list(val_nodes)
-    train_nodes.extend(val_nodes)
-    test_nodes = getattr(dataCenter, ds + '_test')
-    all_nodes = np.random.permutation(len(adj_list))
+    if args.learn_method == "unsup":
+        gap = train_gap(train_nodes, features, graphSage, gap, ds, adj_list_train, epochs=args.gap_epochs, b_sz=args.gap_b_sz,
+                        cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff, num_classes=num_labels, device=device)
 
-    partition_graph(train_nodes, "train", graphSage, gap)
-    # partition_graph(val_nodes, "val", graphSage, gap)
-    partition_graph(test_nodes, "test", graphSage, gap)
-    partition_graph(all_nodes, "all", graphSage, gap)
+    # all_nodes = np.random.permutation(len(adj_list_train))
+
+    partition_graph(train_nodes, features, adj_list_train, "train", graphSage, gap)
+    partition_graph(val_nodes, features, adj_list_val, "val", graphSage, gap)
+    partition_graph(test_nodes, features, adj_list_test, "test", graphSage, gap)
+    # partition_graph(all_nodes, "all", graphSage, gap)
 
     models = [graphSage, gap]
-    torch.save(models,
-               "model_{}_ds{}_ep{}_mb{}-{:.0f}.torch".format(args.learn_method, args.dataSet, args.epochs, args.b_sz,
-                                                             time.time()))
+    # torch.save(models,
+    #            "model_{}_ds{}_ep{}_mb{}-{:.0f}.torch".format(args.learn_method, args.dataSet, args.epochs, args.b_sz,
+    #                                                          time.time()))

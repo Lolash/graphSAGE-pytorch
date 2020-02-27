@@ -87,7 +87,7 @@ class UnsupervisedLoss(object):
         self.Q = 10
         self.N_WALKS = 6
         self.WALK_LEN = 1
-        self.N_WALK_LEN = 5
+        self.N_WALK_LEN = 3
         self.MARGIN = 3
         self.adj_lists = adj_lists
         self.train_nodes = train_nodes
@@ -183,6 +183,8 @@ class UnsupervisedLoss(object):
         # print(self.negtive_pairs)
         self.unique_nodes_batch = list(
             set([i for x in self.positive_pairs for i in x]) | set([i for x in self.negtive_pairs for i in x]))
+        # print("unique nodes batch: ", self.unique_nodes_batch)
+        # print("target nodes: ", self.target_nodes)
         assert set(self.target_nodes) < set(self.unique_nodes_batch)
         return self.unique_nodes_batch
 
@@ -191,6 +193,8 @@ class UnsupervisedLoss(object):
 
     def get_negtive_nodes(self, nodes, num_neg):
         for node in nodes:
+            # if len(self.adj_lists[int(node)]) == 0:
+            #     continue
             neighbors = set([node])
             frontier = set([node])
             for i in range(self.N_WALK_LEN):
@@ -207,14 +211,17 @@ class UnsupervisedLoss(object):
 
     def _run_random_walks(self, nodes):
         for node in nodes:
-            if len(self.adj_lists[int(node)]) == 0:
-                continue
+            # if len(self.adj_lists[int(node)]) == 0:
+            #     continue
             cur_pairs = []
             for i in range(self.N_WALKS):
                 curr_node = node
                 for j in range(self.WALK_LEN):
                     neighs = self.adj_lists[int(curr_node)]
-                    next_node = random.choice(list(neighs))
+                    if neighs:
+                        next_node = random.choice(list(neighs))
+                    else:
+                        next_node = node
                     # self co-occurrences are useless
                     if next_node != node and next_node in self.train_nodes:
                         self.positive_pairs.append((node, next_node))
@@ -251,6 +258,8 @@ class SageLayer(nn.Module):
 
         nodes	 -- list of nodes
         """
+        # print("self: ", self_feats)
+        # print("aggr: ", aggregate_feats)
         if not self.gcn:
             combined = torch.cat([self_feats, aggregate_feats], dim=1)
         else:
@@ -262,7 +271,7 @@ class SageLayer(nn.Module):
 class GraphSage(nn.Module):
     """docstring for GraphSage"""
 
-    def __init__(self, num_layers, input_size, out_size, raw_features, adj_lists, device, gcn=False, agg_func='MEAN'):
+    def __init__(self, num_layers, input_size, out_size, device, gcn=False, agg_func='MEAN'):
         super(GraphSage, self).__init__()
 
         self.input_size = input_size
@@ -272,30 +281,31 @@ class GraphSage(nn.Module):
         self.device = device
         self.agg_func = agg_func
 
-        self.raw_features = raw_features
-        self.adj_lists = adj_lists
-
         for index in range(1, num_layers + 1):
             layer_size = out_size if index != 1 else input_size
             setattr(self, 'sage_layer' + str(index), SageLayer(layer_size, out_size, gcn=self.gcn))
 
-    def forward(self, nodes_batch):
+    def forward(self, nodes_ids, nodes_features, adj_lists):
         """
         Generates embeddings for a batch of nodes.
         nodes_batch	-- batch of nodes to learn the embeddings
         """
-        lower_layer_nodes = list(nodes_batch)
+        # print(len(nodes_ids))
+        # print(len(nodes_features))
+        # print(len(adj_lists))
+
+        lower_layer_nodes = list(nodes_ids)
         nodes_batch_layers = [(lower_layer_nodes,)]
         # self.dc.logger.info('get_unique_neighs.')
         for i in range(self.num_layers):
             lower_samp_neighs, lower_layer_nodes_dict, lower_layer_nodes = self._get_unique_neighs_list(
-                lower_layer_nodes)
+                lower_layer_nodes, adj_lists)
             nodes_batch_layers.insert(0, (lower_layer_nodes, lower_samp_neighs, lower_layer_nodes_dict))
 
         assert len(nodes_batch_layers) == self.num_layers + 1
-
-        pre_hidden_embs = self.raw_features
+        pre_hidden_embs = nodes_features
         for index in range(1, self.num_layers + 1):
+            # print("INDEX: ", index)
             nb = nodes_batch_layers[index][0]
             pre_neighs = nodes_batch_layers[index - 1]
             # self.dc.logger.info('aggregate_feats.')
@@ -314,12 +324,13 @@ class GraphSage(nn.Module):
         layer_nodes, samp_neighs, layer_nodes_dict = neighs
         assert len(samp_neighs) == len(nodes)
         index = [layer_nodes_dict[x] for x in nodes]
+        # print("nodes map: ", index)
         return index
 
-    def _get_unique_neighs_list(self, nodes, num_sample=10):
+    def _get_unique_neighs_list(self, nodes, adj_lists, num_sample=10):
         _set = set
-        to_neighs = [self.adj_lists[int(node)] for node in nodes]
-        if not num_sample is None:
+        to_neighs = [adj_lists[int(node)] for node in nodes]
+        if num_sample is not None:
             _sample = random.sample
             samp_neighs = [_set(_sample(to_neigh, num_sample)) if len(to_neigh) >= num_sample else to_neigh for to_neigh
                            in to_neighs]
@@ -340,20 +351,30 @@ class GraphSage(nn.Module):
         if not self.gcn:
             samp_neighs = [(samp_neighs[i] - set([nodes[i]])) for i in range(len(samp_neighs))]
         # self.dc.logger.info('2')
+        # print("samp neights after subtraction: ", samp_neighs)
+        # print("nodes: ", nodes)
+        # print("len nodes: ", len(nodes))
+        # print("len unique nodes: ", len(unique_nodes_list))
+        # print("pre_hidden_embs len: ", len(pre_hidden_embs))
         if len(pre_hidden_embs) == len(unique_nodes):
             embed_matrix = pre_hidden_embs
         else:
             embed_matrix = pre_hidden_embs[torch.LongTensor(unique_nodes_list)]
         # self.dc.logger.info('3')
         mask = torch.zeros(len(samp_neighs), len(unique_nodes))
+        # print("samp neighs: ", len(samp_neighs))
+        # print("unique nodes: ", len(unique_nodes))
         column_indices = [unique_nodes[n] for samp_neigh in samp_neighs for n in samp_neigh]
         row_indices = [i for i in range(len(samp_neighs)) for j in range(len(samp_neighs[i]))]
         mask[row_indices, column_indices] = 1
         # self.dc.logger.info('4')
 
         if self.agg_func == 'MEAN':
+            # print("mask ", mask)
             num_neigh = mask.sum(1, keepdim=True)
             mask = mask.div(num_neigh).to(embed_matrix.device)
+            # trick to remove NaNs in case num_neigh was 0
+            mask[mask != mask] = 0
             aggregate_feats = mask.mm(embed_matrix)
 
         elif self.agg_func == 'MAX':

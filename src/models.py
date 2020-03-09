@@ -1,4 +1,6 @@
 import sys, os
+from collections import deque
+
 import torch
 import random
 
@@ -30,6 +32,8 @@ class Classification(nn.Module):
 
     def forward(self, embeds):
         logists = torch.softmax(self.layer(embeds), 1)
+        if torch.cuda.is_available():
+            logists = logists.cuda()
         if self.gumbel != 0:
             logists = self.gumbel_softmax(logists, 10)
         return logists
@@ -107,6 +111,8 @@ class UnsupervisedLoss(object):
 
         nodes_score = []
         assert len(self.node_positive_pairs) == len(self.node_negtive_pairs)
+        # print(len(self.node_positive_pairs))
+        # print(len(self.node_negtive_pairs))
         for node in self.node_positive_pairs:
             pps = self.node_positive_pairs[node]
             nps = self.node_negtive_pairs[node]
@@ -170,25 +176,28 @@ class UnsupervisedLoss(object):
 
         return loss
 
-    def extend_nodes(self, nodes, num_neg=6):
+    def extend_nodes(self, nodes, bfs=False, num_neg=6):
         self.positive_pairs = []
         self.node_positive_pairs = {}
         self.negtive_pairs = []
         self.node_negtive_pairs = {}
 
         self.target_nodes = nodes
-        self.get_positive_nodes(nodes)
+        self.get_positive_nodes(nodes, bfs)
         # print(self.positive_pairs)
         self.get_negtive_nodes(nodes, num_neg)
         # print(self.negtive_pairs)
         self.unique_nodes_batch = list(
             set([i for x in self.positive_pairs for i in x]) | set([i for x in self.negtive_pairs for i in x]))
+        # print("nodes: ", nodes)
         # print("unique nodes batch: ", self.unique_nodes_batch)
         # print("target nodes: ", self.target_nodes)
         assert set(self.target_nodes) < set(self.unique_nodes_batch)
         return self.unique_nodes_batch
 
-    def get_positive_nodes(self, nodes):
+    def get_positive_nodes(self, nodes, bfs):
+        if bfs:
+            return self._run_bfs(nodes)
         return self._run_random_walks(nodes)
 
     def get_negtive_nodes(self, nodes, num_neg):
@@ -208,6 +217,24 @@ class UnsupervisedLoss(object):
             self.negtive_pairs.extend([(node, neg_node) for neg_node in neg_samples])
             self.node_negtive_pairs[node] = [(node, neg_node) for neg_node in neg_samples]
         return self.negtive_pairs
+
+    def _run_bfs(self, nodes):
+        if len(nodes) == 0:
+            return self.positive_pairs
+        queue = deque()
+        for i in nodes:
+            cur_pairs = []
+            nbs = self.adj_lists[i]
+            if len(nbs) == 0:
+                self.positive_pairs.append((i, i))
+                self.node_positive_pairs[i] = [(i, i)]
+            for nb in nbs:
+                self.positive_pairs.append((i, nb))
+                cur_pairs.append((i, nb))
+            self.node_positive_pairs[i] = cur_pairs
+        return self.positive_pairs
+
+
 
     def _run_random_walks(self, nodes):
         for node in nodes:
@@ -379,6 +406,7 @@ class GraphSage(nn.Module):
 
         elif self.agg_func == 'MAX':
             # print(mask)
+            mask[mask != mask] = 0
             indexs = [x.nonzero() for x in mask == 1]
             aggregate_feats = []
             # self.dc.logger.info('5')

@@ -6,6 +6,7 @@ import networkx as nx
 import numpy as np
 import torch
 import torch.nn as nn
+from src.main import tensorboard
 from scipy import sparse
 from sklearn.metrics import f1_score
 from sklearn.utils import shuffle
@@ -35,20 +36,11 @@ def evaluate(adj_list, val_nodes, features, graphSage, gap, bal_coeff, cut_coeff
 
 def get_gnn_embeddings(gnn_model, nodes_ids, features, adj_list):
     print('Loading embeddings from trained GraphSAGE model.')
-    b_sz = 500
-    batches = math.ceil(len(nodes_ids) / b_sz)
-    embs = []
-    for index in range(batches):
-        nodes_batch = nodes_ids[index * b_sz:(index + 1) * b_sz]
-        embs_batch = gnn_model(nodes_batch, features, adj_list)
-        assert len(embs_batch) == len(nodes_batch)
-        embs.append(embs_batch)
-        # if ((index+1)*b_sz) % 10000 == 0:
-        #     print(f'Dealed Nodes [{(index+1)*b_sz}/{len(nodes)}]')
 
-    assert len(embs) == batches
-    embs = torch.cat(embs, 0)
+    embs = gnn_model(nodes_ids, features, adj_list)
     assert len(embs) == len(nodes_ids)
+    # if ((index+1)*b_sz) % 10000 == 0:
+    #     print(f'Dealed Nodes [{(index+1)*b_sz}/{len(nodes)}]')
     print('Embeddings loaded.')
     return embs.detach()
 
@@ -95,11 +87,7 @@ def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_
     c_optimizer = torch.optim.Adam(classification.parameters(), lr=7.5e-5)
     # train classification, detached from the current graph
     # classification.init_params()
-    embs = get_gnn_embeddings(graphSage, nodes_ids, features, adj_list)
-
-    train_nodes = []
-    for emd_id, node_id in enumerate(nodes_ids):
-        train_nodes.append(emd_id)
+    train_nodes = nodes_ids
 
     for epoch in range(epochs):
         train_nodes = shuffle(train_nodes)
@@ -109,12 +97,16 @@ def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_
         visited_nodes = set()
         for index in range(batches):
             nodes_batch = train_nodes[index * b_sz:(index + 1) * b_sz]
-            visited_nodes |= set(nodes_ids[nodes_batch])
-            
-            embs_batch = embs[nodes_batch]
+            visited_nodes |= set(nodes_batch)
+            embs = get_gnn_embeddings(graphSage, nodes_batch, features, adj_list)
+            emb_id_to_node_id = []
+            for emd_id, node_id in enumerate(nodes_batch):
+                emb_id_to_node_id.append(emd_id)
+
+            embs_batch = embs[emb_id_to_node_id]
 
             loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes,
-                                device)
+                                device, epoch=epoch, step=index + 1)
             print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Dealed Nodes [{}/{}] '.format(epoch + 1, epochs, index,
                                                                                             batches, loss.item(),
                                                                                             len(visited_nodes),
@@ -129,7 +121,8 @@ def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_
     return classification
 
 
-def get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes, device):
+def get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes, device, epoch=-1,
+                 step=-1, num_steps=-1):
     logists = classification(embs_batch)
     batch_adj_list = {}
     for node in nodes_batch:
@@ -165,13 +158,18 @@ def get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nod
     ground_truth = torch.tensor([num_nodes / float(num_classes)] * num_classes).to(device)
     mse_loss = torch.nn.modules.loss.MSELoss()
     bal = mse_loss(ground_truth, cluster_size)
+    # print("Bal: ", bal)
     loss = cut_coeff * left_sum + bal_coeff * bal
-
+    if step != -1:
+        global_step = epoch * num_steps + step + 1
+        tensorboard.add_scalar("cut", left_sum.item(), global_step=global_step)
+        tensorboard.add_scalar("balance", bal.item(), global_step=global_step)
+        tensorboard.add_scalar("loss", loss.item(), global_step=global_step)
     return loss
 
 
 def apply_model(nodes, features, graphSage, classification, unsupervised_loss, b_sz, unsup_loss, device, learn_method,
-                adj_list, num_classes, cut_coeff=1, bal_coeff=1):
+                adj_list, num_classes, bfs, epoch, cut_coeff, bal_coeff):
     if unsup_loss == 'margin':
         num_neg = 6
     elif unsup_loss == 'normal':
@@ -203,14 +201,15 @@ def apply_model(nodes, features, graphSage, classification, unsupervised_loss, b
         # extend nodes batch for unspervised learning
         # no conflicts with supervised learning
         # print("not extended: ", len(nodes_batch))
-        nodes_batch = np.asarray(list(unsupervised_loss.extend_nodes(nodes_batch, num_neg=num_neg)))
-        visited_nodes |= set(nodes_batch)
+        extended_nodes_batch = np.asarray(list(unsupervised_loss.extend_nodes(nodes_batch, num_neg=num_neg, bfs=bfs)))
+        visited_nodes |= set(extended_nodes_batch)
 
         # get ground-truth for the nodes batch
         # labels_batch = labels[nodes_batch]
 
         # feed nodes batch to the graphSAGE
         # returning the nodes embeddings
+        extended_embs_batch = graphSage(extended_nodes_batch, features, adj_list)
         embs_batch = graphSage(nodes_batch, features, adj_list)
 
         if learn_method == 'sup':
@@ -222,14 +221,14 @@ def apply_model(nodes, features, graphSage, classification, unsupervised_loss, b
             # loss = loss_sup
         elif learn_method == 'gap':
             loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes,
-                                device=device)
+                                device=device, epoch=epoch, step=index + 1, num_steps=batches)
         elif learn_method == 'gap_plus':
             gap_loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch,
-                                    num_classes, device=device)
+                                    num_classes, device=device, epoch=epoch, step=index + 1, num_steps=batches)
             if unsup_loss == 'margin':
-                loss_net = unsupervised_loss.get_loss_margin(embs_batch, nodes_batch)
+                loss_net = unsupervised_loss.get_loss_margin(extended_embs_batch, extended_nodes_batch)
             elif unsup_loss == 'normal':
-                loss_net = unsupervised_loss.get_loss_sage(embs_batch, nodes_batch)
+                loss_net = unsupervised_loss.get_loss_sage(extended_embs_batch, extended_nodes_batch)
             loss = loss_net + gap_loss
 
         elif learn_method == 'plus_unsup':
@@ -246,9 +245,9 @@ def apply_model(nodes, features, graphSage, classification, unsupervised_loss, b
             # loss = loss_sup + loss_net
         else:
             if unsup_loss == 'margin':
-                loss_net = unsupervised_loss.get_loss_margin(embs_batch, nodes_batch)
+                loss_net = unsupervised_loss.get_loss_margin(extended_embs_batch, extended_nodes_batch)
             elif unsup_loss == 'normal':
-                loss_net = unsupervised_loss.get_loss_sage(embs_batch, nodes_batch)
+                loss_net = unsupervised_loss.get_loss_sage(extended_embs_batch, extended_nodes_batch)
             loss = loss_net
 
         print('Step [{}/{}], Loss: {:.4f}, Dealed Nodes [{}/{}] '.format(index + 1, batches, loss.item(),
@@ -263,3 +262,15 @@ def apply_model(nodes, features, graphSage, classification, unsupervised_loss, b
             model.zero_grad()
 
     return graphSage, classification
+
+
+def get_reduced_adj_list(nodes_batch, adj_list):
+    """ Returns adj_list which contains nodes only from given nodes list. """
+    reduced_adj_list = {}
+
+    for n in nodes_batch:
+        reduced_adj_list[n] = set()
+        for nei in adj_list[n]:
+            if nei in nodes_batch:
+                reduced_adj_list[n].add(nei)
+    return reduced_adj_list

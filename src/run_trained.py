@@ -23,7 +23,6 @@ parser.add_argument('--cut_coeff', type=float, default=1.0)
 parser.add_argument('--bal_coeff', type=float, default=1.0)
 parser.add_argument('--num_classes', type=int, default=0)
 parser.add_argument('--bfs', type=int, default=0)
-parser.add_argument('--model', type=str, default="")
 parser.add_argument('--seed', type=int, default=0)
 parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
@@ -63,7 +62,8 @@ device = torch.device("cuda" if args.cuda else "cpu")
 print('DEVICE:', device)
 
 
-def partition_graph(nodes, features, adj_list, name, graphsage, gap, gnn_num_layers, gnn_emb_size, num_labels, batch_size=-1):
+def partition_graph(nodes, features, adj_list, name, graphsage, gap, gnn_num_layers, gnn_emb_size, num_labels,
+                    batch_size=-1):
     embs = None
     if batch_size == -1:
         embs = graphsage(nodes, features, adj_list)
@@ -95,7 +95,6 @@ def partition_graph(nodes, features, adj_list, name, graphsage, gap, gnn_num_lay
                 graph.add_edge(i, n)
         if not graph.has_node(i):
             graph.add_node(i)
-    assert(len(graph.nodes) == len(nodes))
     colors = ['red', 'blue', 'green', 'yellow', 'pink', 'orange', 'purple']
     partitions = {}
     for i, p in colors_dict.items():
@@ -117,7 +116,7 @@ def partition_graph(nodes, features, adj_list, name, graphsage, gap, gnn_num_lay
     print("Performance of {}: {}".format(name, perf))
     print("Coverage of {}: {}".format(name, coverage))
     print("Balancedness of {}: {}".format(name, balancedness))
-    print("Edge cut of {}: {}".format(name, get_cut(graph)))
+    print("Edge cut of {}: {}".format(name, 1.0 - coverage))
 
     filename = "ds-{}_gnn_layers-{}_gnn_emb_size-{}_{}_mb-{}_e-{}_ge-{}_gmb-{}__inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}_num_classes-{}_bfs-{}_{}-{}.dot".format(
         args.dataSet,
@@ -140,95 +139,56 @@ def partition_graph(nodes, features, adj_list, name, graphsage, gap, gnn_num_lay
     nx.nx_pydot.write_dot(graph, filename)
     subprocess.call([r"C:\Program Files (x86)\Graphviz2.38\bin\sfdp.exe", filename, "-Tpng", "-o", filename + ".png"])
 
+#
+# def partition_edge_stream(graphsage, gap, edge_stream, features, training_graph, training_embeddings, args):
+#
+#
+#
+# print("Started")
+if args.seed == 0:
+    args.seed = random.randint(100, 999)
+random.seed(args.seed)
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
+torch.cuda.manual_seed_all(args.seed)
 
-if __name__ == '__main__':
-    if args.seed == 0:
-        args.seed = random.randint(100, 999)
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
+# load config file
+config = pyhocon.ConfigFactory.parse_file(args.config)
 
-    # load config file
-    config = pyhocon.ConfigFactory.parse_file(args.config)
+# load data
+ds = args.dataSet
+dataCenter = DataCenter(config)
+dataCenter.load_dataSet(ds)
+features = torch.FloatTensor(getattr(dataCenter, ds + '_feats')).to(device)
+features_test = torch.FloatTensor(getattr(dataCenter, ds + '_feats_test')).to(device)
+features_val = torch.FloatTensor(getattr(dataCenter, ds + '_feats_val')).to(device)
 
-    # load data
-    ds = args.dataSet
-    dataCenter = DataCenter(config)
-    dataCenter.load_dataSet(ds)
-    features = torch.FloatTensor(getattr(dataCenter, ds + '_feats')).to(device)
-    features_train = torch.FloatTensor(getattr(dataCenter, ds + '_feats_train')).to(device)
-    features_test = torch.FloatTensor(getattr(dataCenter, ds + '_feats_test')).to(device)
-    features_val = torch.FloatTensor(getattr(dataCenter, ds + '_feats_val')).to(device)
+# self, num_layers, input_size, out_size, device, gcn=False, agg_func='MEAN')
+adj_list = getattr(dataCenter, ds + '_adj_list')
+adj_list_train = getattr(dataCenter, ds + "_adj_list_train")
+adj_list_val = getattr(dataCenter, ds + '_adj_list_val')
+adj_list_test = getattr(dataCenter, ds + '_adj_list_test')
 
-    # self, num_layers, input_size, out_size, device, gcn=False, agg_func='MEAN')
-    adj_list = getattr(dataCenter, ds + '_adj_list')
-    adj_list_train = getattr(dataCenter, ds + '_adj_list_train')
-    adj_list_val = getattr(dataCenter, ds + '_adj_list_val')
-    adj_list_test = getattr(dataCenter, ds + '_adj_list_test')
+train_nodes = getattr(dataCenter, ds + "_train")
+val_nodes = getattr(dataCenter, ds + "_val")
+test_nodes = getattr(dataCenter, ds + '_test')
 
-    train_nodes = getattr(dataCenter, ds + "_train")
-    val_nodes = getattr(dataCenter, ds + "_val")
-    test_nodes = getattr(dataCenter, ds + '_test')
+gnn_num_layers = config['setting.num_layers']
+gnn_emb_size = config['setting.hidden_emb_size']
 
-    gnn_num_layers = config['setting.num_layers']
-    gnn_emb_size = config['setting.hidden_emb_size']
+[graphSage, gap] = torch.load(
+    "model-reddit_gap_edge_mb10_e20_ge200_gmb20_gumbel-0_cut1.0_bal1.0_aggMEAN-1585336080.9641972.torch")
+graphSage.to(device)
 
-    if args.model != "":
-        [graphSage, gap] = torch.load(args.model)
-    else:
-        graphSage = GraphSage(gnn_num_layers, features.size(1), gnn_emb_size,
-                          device,
-                          gcn=args.gcn, agg_func=args.agg_func)
-        if args.num_classes == 0:
-            num_labels = len(set(getattr(dataCenter, ds + '_labels')))
-        else:
-            num_labels = args.num_classes
-        gap = Classification(gnn_emb_size, num_labels, device=device, gumbel=args.gumbel)
-    graphSage.to(device)
-    gap.to(device)
+if args.num_classes == 0:
+    num_labels = len(set(getattr(dataCenter, ds + '_labels')))
+else:
+    num_labels = args.num_classes
+gap.to(device)
 
-    unsupervised_loss = UnsupervisedLoss(adj_list_train, train_nodes, device)
-
-    if args.learn_method == 'sup':
-        print('GraphSage with Supervised Learning')
-    elif args.learn_method == 'plus_unsup':
-        print('GraphSage with Supervised Learning plus Net Unsupervised Learning')
-    else:
-        print('GraphSage with Net Unsupervised Learning')
-
-    for epoch in range(args.epochs):
-        print('----------------------EPOCH %d-----------------------' % epoch)
-        graphSage, gap = apply_model(train_nodes, features, graphSage, gap,
-                                     unsupervised_loss,
-                                     args.b_sz,
-                                     args.unsup_loss, device, args.learn_method, adj_list_train, num_classes=num_labels,
-                                     bfs=args.bfs, cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff, epoch=epoch)
-        # if (epoch + 1) % 2 == 0 and args.learn_method == 'unsup':
-        #     classification, args.max_vali_f1 = train_classification(dataCenter, graphSage, classification, ds, device,
-        #                                                             args.max_vali_f1, args.name)
-        # if args.learn_method != 'unsup':
-        # val_nodes = getattr(dataCenter, ds + "_val")
-        # args.max_vali_f1 = evaluate(adj_list_val, val_nodes, features, graphSage, gap, args.bal_coeff, args.cut_coeff,
-        #                             num_labels,
-        #                             device, epoch, args)
-
-    # val_nodes = [i for i in range(0, 2708)]
-
-    if args.learn_method == "unsup":
-        gap = train_gap(train_nodes, features, graphSage, gap, ds, adj_list_train, epochs=args.gap_epochs,
-                        b_sz=args.gap_b_sz,
-                        cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff, num_classes=num_labels, device=device)
-
-    # all_nodes = np.random.permutation(len(adj_list_train))
-
-    partition_graph(train_nodes, features, adj_list_train, "train", graphSage, gap, gnn_num_layers, gnn_emb_size,
-                    num_labels=num_labels, batch_size=args.inf_b_sz)
-    partition_graph(val_nodes, features, adj_list_val, "val", graphSage, gap, gnn_num_layers, gnn_emb_size,
-                    num_labels=num_labels, batch_size=args.inf_b_sz)
-    partition_graph(test_nodes, features, adj_list_test, "test", graphSage, gap, gnn_num_layers, gnn_emb_size,
-                    num_labels=num_labels, batch_size=args.inf_b_sz)
-    # partition_graph(all_nodes, "all", graphSage, gap)
-
-    models = [graphSage, gap]
-    torch.save(models, filename + ".torch")
+partition_graph(train_nodes, features, adj_list_train, "train", graphSage, gap, gnn_num_layers, gnn_emb_size,
+                num_labels=num_labels, batch_size=args.inf_b_sz)
+# partition_graph(val_nodes, features, adj_list_val, "val", graphSage, gap, gnn_num_layers, gnn_emb_size,
+#                 num_labels=num_labels, batch_size=args.inf_b_sz)
+partition_graph(test_nodes, features, adj_list_test, "test", graphSage, gap, gnn_num_layers, gnn_emb_size,
+                num_labels=num_labels, batch_size=args.inf_b_sz)

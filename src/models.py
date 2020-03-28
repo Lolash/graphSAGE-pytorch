@@ -11,7 +11,7 @@ from torch.autograd import Variable
 
 class Classification(nn.Module):
 
-    def __init__(self, emb_size, num_classes, gumbel=0, hid_size=64):
+    def __init__(self, emb_size, num_classes, device, gumbel=0, hid_size=64):
         super(Classification, self).__init__()
 
         # self.weight = nn.Parameter(torch.FloatTensor(emb_size, num_classes))
@@ -24,6 +24,7 @@ class Classification(nn.Module):
             nn.Linear(hid_size, num_classes)
         )
         self.init_params()
+        self.device = device
 
     def init_params(self):
         for param in self.parameters():
@@ -32,16 +33,14 @@ class Classification(nn.Module):
 
     def forward(self, embeds):
         logists = torch.softmax(self.layer(embeds), 1)
-        if torch.cuda.is_available():
-            logists = logists.cuda()
         if self.gumbel != 0:
-            logists = self.gumbel_softmax(logists, 10)
-        return logists
+            logists = self.gumbel_softmax(logists, 2)
+        # print(logists)
+        return logists.to(self.device)
 
     def sample_gumbel(self, shape, eps=1e-20):
         U = torch.rand(shape)
-        if torch.cuda.is_available():
-            U = U.cuda()
+        U.to(self.device)
         return -Variable(torch.log(-torch.log(U + eps) + eps))
 
     def gumbel_softmax_sample(self, logits, temperature, beta=1.0):
@@ -57,8 +56,7 @@ class Classification(nn.Module):
         shape = y.size()
         _, ind = y.max(dim=-1)
         y_hard = torch.zeros_like(y).view(-1, shape[-1])
-        if torch.cuda.is_available():
-            y_hard = y_hard.cuda()
+        y_hard.to(self.device)
         y_hard.scatter_(1, ind.view(-1, 1), 1)
         y_hard = y_hard.view(*shape)
         if hard:
@@ -89,8 +87,12 @@ class UnsupervisedLoss(object):
     def __init__(self, adj_lists, train_nodes, device):
         super(UnsupervisedLoss, self).__init__()
         self.Q = 10
+        # 24.03.2020 15:54 I change this from 6 to 2 - worse results
+        # 16:02 I increase from to 8
         self.N_WALKS = 6
-        self.WALK_LEN = 1
+        # 24.03.2020 15:13 I change this from 1 to 2 - better than bfs
+        # 15:34 I change this from 2 to 3 - slight improvement
+        self.WALK_LEN = 3
         self.N_WALK_LEN = 3
         self.MARGIN = 3
         self.adj_lists = adj_lists
@@ -117,6 +119,9 @@ class UnsupervisedLoss(object):
             pps = self.node_positive_pairs[node]
             nps = self.node_negtive_pairs[node]
             if len(pps) == 0 or len(nps) == 0:
+                # print("PPS or NPS 0")
+                # print(pps)
+                # print(nps)
                 continue
 
             # Q * Exception(negative score)
@@ -137,6 +142,8 @@ class UnsupervisedLoss(object):
 
             nodes_score.append(torch.mean(- pos_score - neg_score).view(1, -1))
 
+        if len(nodes_score) == 0:
+            print("NO NODES SCORE")
         loss = torch.mean(torch.cat(nodes_score, 0))
 
         return loss
@@ -192,7 +199,7 @@ class UnsupervisedLoss(object):
         # print("nodes: ", nodes)
         # print("unique nodes batch: ", self.unique_nodes_batch)
         # print("target nodes: ", self.target_nodes)
-        assert set(self.target_nodes) < set(self.unique_nodes_batch)
+        assert set(self.target_nodes) <= set(self.unique_nodes_batch)
         return self.unique_nodes_batch
 
     def get_positive_nodes(self, nodes, bfs):
@@ -228,10 +235,11 @@ class UnsupervisedLoss(object):
             if len(nbs) == 0:
                 self.positive_pairs.append((i, i))
                 self.node_positive_pairs[i] = [(i, i)]
-            for nb in nbs:
-                self.positive_pairs.append((i, nb))
-                cur_pairs.append((i, nb))
-            self.node_positive_pairs[i] = cur_pairs
+            else:
+                for nb in nbs:
+                    self.positive_pairs.append((i, nb))
+                    cur_pairs.append((i, nb))
+                self.node_positive_pairs[i] = cur_pairs
         return self.positive_pairs
 
 
@@ -250,7 +258,9 @@ class UnsupervisedLoss(object):
                     else:
                         next_node = node
                     # self co-occurrences are useless
-                    if next_node != node and next_node in self.train_nodes:
+                    # my comment: in some cases there is no other option - when all nodes in batch have no outgoing
+                    # edges this is the only way; thus I remove next_node != node condition
+                    if next_node in self.train_nodes:
                         self.positive_pairs.append((node, next_node))
                         cur_pairs.append((node, next_node))
                     curr_node = next_node

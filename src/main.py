@@ -1,39 +1,13 @@
-import argparse
-import time
-
-import subprocess
 import pyhocon
+from tensorboardX import SummaryWriter
 
 from src.dataCenter import *
 from src.models import *
+from src.partition import partition_graph, partition_edge_stream
+from src.args import parser
 from src.utils import *
-from tensorboardX import SummaryWriter
 
-parser = argparse.ArgumentParser(description='pytorch version of GraphSAGE')
-
-parser.add_argument('--dataSet', type=str, default='cora')
-parser.add_argument('--agg_func', type=str, default='MEAN')
-parser.add_argument('--epochs', type=int, default=50)
-parser.add_argument('--gap_epochs', type=int, default=200)
-parser.add_argument('--b_sz', type=int, default=20)
-parser.add_argument('--gap_b_sz', type=int, default=0)
-parser.add_argument('--inf_b_sz', type=int, default=-1)
-parser.add_argument('--gumbel', type=int, default=0)
-parser.add_argument('--cut_coeff', type=float, default=1.0)
-parser.add_argument('--bal_coeff', type=float, default=1.0)
-parser.add_argument('--num_classes', type=int, default=0)
-parser.add_argument('--bfs', type=int, default=0)
-parser.add_argument('--model', type=str, default="")
-parser.add_argument('--seed', type=int, default=0)
-parser.add_argument('--cuda', action='store_true',
-                    help='use CUDA')
-parser.add_argument('--gcn', action='store_true')
-parser.add_argument('--learn_method', type=str, default='sup')
-parser.add_argument('--unsup_loss', type=str, default='normal')
-parser.add_argument('--max_vali_f1', type=float, default=0)
-parser.add_argument('--name', type=str, default='debug')
-parser.add_argument('--config', type=str, default='./src/experiments.conf')
-args = parser.parse_args()
+args = parser().parse_args()
 filename = "ds-{}_{}_mb-{}_e-{}_ge-{}_gmb-{}_inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}-num_classes-{}-bfs-{}-{}.dot".format(
     args.dataSet,
     args.learn_method,
@@ -61,87 +35,11 @@ if torch.cuda.is_available():
 device = torch.device("cuda" if args.cuda else "cpu")
 # device = torch.device("cpu")
 print('DEVICE:', device)
-
-
-def partition_graph(nodes, features, adj_list, name, graphsage, gap, gnn_num_layers, gnn_emb_size, num_labels, batch_size=-1):
-    embs = None
-    if batch_size == -1:
-        embs = graphsage(nodes, features, adj_list)
-    else:
-        iters = math.ceil(len(nodes) / batch_size)
-        for i in range(iters):
-            batch_nodes = nodes[i * batch_size:(i + 1) * batch_size]
-            batch_adj_list = get_reduced_adj_list(batch_nodes, adj_list)
-            batch_embs = graphsage(batch_nodes, features, batch_adj_list)
-            if embs is None:
-                embs = batch_embs
-            else:
-                embs = torch.cat([embs, batch_embs], 0)
-    assert len(embs) == len(nodes)
-    tensorboard.add_embedding(embs.cpu(), tag=name)
-    logists = gap(embs)
-    _, predicts = torch.max(logists, 1)
-    graph = nx.Graph()
-    val_adj_list = {}
-    colors_dict = {}
-    assert len(logists) == len(nodes)
-    for i, node in enumerate(nodes):
-        colors_dict[int(node)] = predicts[i]
-        val_adj_list[int(node)] = adj_list[int(node)]
-    graph = nx.Graph()
-    for i, ns in val_adj_list.items():
-        for n in ns:
-            if n in val_adj_list:
-                graph.add_edge(i, n)
-        if not graph.has_node(i):
-            graph.add_node(i)
-    assert(len(graph.nodes) == len(nodes))
-    colors = ['red', 'blue', 'green', 'yellow', 'pink', 'orange', 'purple']
-    partitions = {}
-    for i, p in colors_dict.items():
-        graph.nodes[i]['color'] = colors[p]
-        if colors[p] not in partitions:
-            partitions[colors[p]] = [i]
-        else:
-            partitions[colors[p]].append(i)
-    cardinalities = np.array([len(i) for i in partitions.values()])
-    balanced = np.array([int(len(graph.nodes) / num_labels)] * len(cardinalities))
-    print(cardinalities)
-    print(balanced)
-    print(cardinalities - balanced)
-    balancedness = 1 - ((cardinalities - balanced) ** 2).mean()
-
-    perf = nx.algorithms.community.performance(graph, partitions.values())
-    coverage = nx.algorithms.community.coverage(graph, partitions.values())
-
-    print("Performance of {}: {}".format(name, perf))
-    print("Coverage of {}: {}".format(name, coverage))
-    print("Balancedness of {}: {}".format(name, balancedness))
-    print("Edge cut of {}: {}".format(name, get_cut(graph)))
-
-    filename = "ds-{}_gnn_layers-{}_gnn_emb_size-{}_{}_mb-{}_e-{}_ge-{}_gmb-{}__inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}_num_classes-{}_bfs-{}_{}-{}.dot".format(
-        args.dataSet,
-        gnn_num_layers,
-        gnn_emb_size,
-        args.learn_method,
-        args.b_sz,
-        args.epochs,
-        args.gap_epochs,
-        args.gap_b_sz,
-        args.inf_b_sz,
-        args.gumbel,
-        args.cut_coeff,
-        args.bal_coeff,
-        args.agg_func,
-        args.num_classes,
-        args.bfs,
-        name,
-        time.time())
-    nx.nx_pydot.write_dot(graph, filename)
-    subprocess.call([r"C:\Program Files (x86)\Graphviz2.38\bin\sfdp.exe", filename, "-Tpng", "-o", filename + ".png"])
-
-
+print("ELO")
+print(__name__)
 if __name__ == '__main__':
+    print("ELO")
+    print(args)
     if args.seed == 0:
         args.seed = random.randint(100, 999)
     random.seed(args.seed)
@@ -173,18 +71,18 @@ if __name__ == '__main__':
 
     gnn_num_layers = config['setting.num_layers']
     gnn_emb_size = config['setting.hidden_emb_size']
+    if args.num_classes == 0:
+        num_labels = len(set(getattr(dataCenter, ds + '_labels')))
+        args.num_classes = num_labels
 
     if args.model != "":
         [graphSage, gap] = torch.load(args.model)
     else:
         graphSage = GraphSage(gnn_num_layers, features.size(1), gnn_emb_size,
-                          device,
-                          gcn=args.gcn, agg_func=args.agg_func)
-        if args.num_classes == 0:
-            num_labels = len(set(getattr(dataCenter, ds + '_labels')))
-        else:
-            num_labels = args.num_classes
-        gap = Classification(gnn_emb_size, num_labels, device=device, gumbel=args.gumbel)
+                              device,
+                              gcn=args.gcn, agg_func=args.agg_func)
+
+        gap = Classification(gnn_emb_size, args.num_classes, device=device, gumbel=args.gumbel)
     graphSage.to(device)
     gap.to(device)
 
@@ -202,8 +100,10 @@ if __name__ == '__main__':
         graphSage, gap = apply_model(train_nodes, features, graphSage, gap,
                                      unsupervised_loss,
                                      args.b_sz,
-                                     args.unsup_loss, device, args.learn_method, adj_list_train, num_classes=num_labels,
-                                     bfs=args.bfs, cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff, epoch=epoch)
+                                     args.unsup_loss, device, args.learn_method, adj_list_train,
+                                     num_classes=args.num_classes,
+                                     bfs=args.bfs, cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff, epoch=epoch,
+                                     tensorboard=tensorboard)
         # if (epoch + 1) % 2 == 0 and args.learn_method == 'unsup':
         #     classification, args.max_vali_f1 = train_classification(dataCenter, graphSage, classification, ds, device,
         #                                                             args.max_vali_f1, args.name)
@@ -217,18 +117,22 @@ if __name__ == '__main__':
 
     if args.learn_method == "unsup":
         gap = train_gap(train_nodes, features, graphSage, gap, ds, adj_list_train, epochs=args.gap_epochs,
-                        b_sz=args.gap_b_sz,
-                        cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff, num_classes=num_labels, device=device)
-
+                        b_sz=args.gap_b_sz, cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff,
+                        num_classes=args.num_classes,
+                        device=device, tensorboard=tensorboard)
+    models = [graphSage, gap]
+    torch.save(models, filename + ".torch")
     # all_nodes = np.random.permutation(len(adj_list_train))
 
     partition_graph(train_nodes, features, adj_list_train, "train", graphSage, gap, gnn_num_layers, gnn_emb_size,
-                    num_labels=num_labels, batch_size=args.inf_b_sz)
+                    num_labels=args.num_classes, args=args, tensorboard=tensorboard, batch_size=args.inf_b_sz)
     partition_graph(val_nodes, features, adj_list_val, "val", graphSage, gap, gnn_num_layers, gnn_emb_size,
-                    num_labels=num_labels, batch_size=args.inf_b_sz)
+                    num_labels=args.num_classes, args=args, tensorboard=tensorboard, batch_size=args.inf_b_sz)
     partition_graph(test_nodes, features, adj_list_test, "test", graphSage, gap, gnn_num_layers, gnn_emb_size,
-                    num_labels=num_labels, batch_size=args.inf_b_sz)
-    # partition_graph(all_nodes, "all", graphSage, gap)
+                    num_labels=args.num_classes, args=args, tensorboard=tensorboard, batch_size=args.inf_b_sz)
+    # # partition_graph(all_nodes, "all", graphSage, gap)
 
-    models = [graphSage, gap]
-    torch.save(models, filename + ".torch")
+    train_edges = getattr(dataCenter, ds + "train_edges")
+    test_edges = getattr(dataCenter, ds + "test_edges")
+    partition_edge_stream(train_edges, adj_list_train, features, graphSage, gap, args)
+    partition_edge_stream(test_edges, adj_list_train, features, graphSage, gap, args)

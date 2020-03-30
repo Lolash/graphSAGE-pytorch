@@ -32,7 +32,7 @@ class DataCenter(object):
             self.prepare_dataset(dataset, fb_feats_file, fb_edges_file)
 
         elif dataset == "reddit":
-            adj_list_train, train_indexs, adj_list_test, test_indexs, feat_data = self.load_reddit_data()
+            adj_list_train, train_indexs, adj_list_test, test_indexs, feat_data, train_edges, test_edges = self.load_reddit_data()
             val_indexs = test_indexs
             feat_data_train = feat_data_test = feat_data_val = feat_data
             adj_list_val = adj_list_test
@@ -48,6 +48,9 @@ class DataCenter(object):
             setattr(self, dataset + '_adj_list_train', adj_list_train)
             setattr(self, dataset + '_adj_list_test', adj_list_test)
             setattr(self, dataset + '_adj_list_val', adj_list_val)
+            setattr(self, dataset + 'train_edges', train_edges)
+            setattr(self, dataset + 'test_edges', test_edges)
+
         elif dataset == 'pubmed':
             pubmed_content_file = self.config['file_path.pubmed_paper']
             pubmed_cite_file = self.config['file_path.pubmed_cites']
@@ -170,10 +173,13 @@ class DataCenter(object):
         g_test = defaultdict(set)
         train_nodes = set()
         test_nodes = set()
+        train_edges = []
+        test_edges = []
         for i, r in reddit_edges.iterrows():
             e = r["edge"]
             src = int(e.split(",")[0][1:])
             dst = int(e.split(",")[1][1:-1])
+            train_edges.append([src, dst])
             g_train[src].add(dst)
             train_nodes.add(src)
             train_nodes.add(dst)
@@ -181,6 +187,7 @@ class DataCenter(object):
             e = r["edge"]
             src = int(e.split(",")[0][1:])
             dst = int(e.split(",")[1][1:-1])
+            test_edges.append([src, dst])
             g_test[src].add(dst)
             test_nodes.add(src)
             test_nodes.add(dst)
@@ -192,7 +199,7 @@ class DataCenter(object):
             scaler.fit(reddit_feats)
             reddit_feats = scaler.transform(reddit_feats)
 
-        return g_train, train_nodes, g_test, test_nodes, reddit_feats  # class_map
+        return g_train, train_nodes, g_test, test_nodes, reddit_feats, train_edges, test_edges  # class_map
 
     def _split_data(self, num_nodes, test_split=3, val_split=6):
         rand_indices = np.random.permutation(num_nodes)

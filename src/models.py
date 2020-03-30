@@ -34,7 +34,7 @@ class Classification(nn.Module):
     def forward(self, embeds):
         logists = torch.softmax(self.layer(embeds), 1)
         if self.gumbel != 0:
-            logists = self.gumbel_softmax(logists, 2)
+            logists = self.gumbel_softmax(logists, 1.5, True)
         # print(logists)
         return logists.to(self.device)
 
@@ -88,7 +88,7 @@ class UnsupervisedLoss(object):
         super(UnsupervisedLoss, self).__init__()
         self.Q = 10
         # 24.03.2020 15:54 I change this from 6 to 2 - worse results
-        # 16:02 I increase from to 8
+        # 16:02 I increase from 6 to 8
         self.N_WALKS = 6
         # 24.03.2020 15:13 I change this from 1 to 2 - better than bfs
         # 15:34 I change this from 2 to 3 - slight improvement

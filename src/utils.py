@@ -6,7 +6,6 @@ import networkx as nx
 import numpy as np
 import torch
 import torch.nn as nn
-from src.main import tensorboard
 from scipy import sparse
 from sklearn.metrics import f1_score
 from sklearn.utils import shuffle
@@ -80,9 +79,8 @@ def train_classification(dataCenter, graphSage, classification, ds, device, max_
 
 
 # b_sz=0 means to take the whole dataset in each epoch
-def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_classes, device, b_sz=0, epochs=800,
-              cut_coeff=1,
-              bal_coeff=1):
+def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_classes, device, tensorboard, b_sz=0,
+              epochs=800, cut_coeff=1, bal_coeff=1):
     print('Training GAP ...')
     c_optimizer = torch.optim.Adam(classification.parameters(), lr=7.5e-5)
     # train classification, detached from the current graph
@@ -106,7 +104,7 @@ def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_
             embs_batch = embs[emb_id_to_node_id]
 
             loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes,
-                                device, epoch=epoch, step=index + 1)
+                                device, epoch=epoch, step=index + 1, tensorboard=tensorboard)
             print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Dealed Nodes [{}/{}] '.format(epoch + 1, epochs, index,
                                                                                             batches, loss.item(),
                                                                                             len(visited_nodes),
@@ -121,8 +119,8 @@ def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_
     return classification
 
 
-def get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes, device, epoch=-1,
-                 step=-1, num_steps=-1):
+def get_gap_loss(adj_list, node_bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes, device,
+                 tensorboard, epoch=-1, step=-1, num_steps=-1):
     logists = classification(embs_batch)
     node2index = {n: i for i, n in enumerate(nodes_batch)}
     batch_adj_list = {}
@@ -142,7 +140,7 @@ def get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nod
     # print(A)
     A = torch.tensor(A, dtype=torch.float)
     # print(torch.sum(A, 1))
-    assert(torch.sum(A, 1).equal(D))
+    assert (torch.sum(A, 1).equal(D))
     A.requires_grad = False
     # graph = nx.Graph()
     # for i, ns in batch_adj_list.items():
@@ -160,34 +158,35 @@ def get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nod
     # print("gamma: ", gamma)
     y_div_gamma = logists / gamma
     # print("y/gamma: ", y_div_gamma)
-    print("y/gamma[0]: ", y_div_gamma[0])
+    # print("y/gamma[0]: ", y_div_gamma[0])
     one_minus_Y_T = (1 - logists).T
     mm = y_div_gamma @ one_minus_Y_T
     # print("MM: ", mm)
     times_adj_matrix = mm * A
     # print("TIMES A: ", times_adj_matrix)
     left_sum = times_adj_matrix.sum()
-    print("LEFT SUM: ", left_sum)
+    # print("LEFT SUM: ", left_sum)
     num_nodes = len(nodes_batch)
     cluster_size = torch.sum(logists, dim=0).to(device)
     ground_truth = torch.tensor([num_nodes / float(num_classes)] * num_classes).to(device)
     mse_loss = torch.nn.modules.loss.MSELoss()
-    bal = mse_loss(ground_truth, cluster_size)
+    node_bal = mse_loss(ground_truth, cluster_size)
 
-    print("Bal: ", bal)
+    # print("Bal: ", bal)
     # / len(nodes_batch) makes it the same regardless of window size
     # loss = (cut_coeff * left_sum + bal_coeff * bal) / len(nodes_batch)
-    loss = (cut_coeff * left_sum + bal_coeff * bal)
+    loss = (cut_coeff * left_sum + node_bal_coeff * node_bal)
 
     if step != -1:
         global_step = epoch * num_steps + step
         tensorboard.add_scalar("cut", left_sum.item(), global_step=global_step)
-        tensorboard.add_scalar("balance", bal.item(), global_step=global_step)
+        tensorboard.add_scalar("node balance", node_bal.item(), global_step=global_step)
         tensorboard.add_scalar("gap loss", loss.item(), global_step=global_step)
     return loss
 
 
-def get_gap_edge_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes, device,
+def get_gap_edge_loss(adj_list, edge_bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes, device,
+                      tensorboard,
                       epoch=-1, step=-1, num_steps=-1):
     logists = classification(embs_batch)
     node2index = {n: i for i, n in enumerate(nodes_batch)}
@@ -196,6 +195,7 @@ def get_gap_edge_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch
     for node in nodes_batch:
         batch_adj_list[int(node)] = adj_list[int(node)]
 
+    # TODO: FIX THIS LOSS - now it does something different than needed
     edge_cut = torch.tensor(0.0)
     e = torch.tensor(0.0)
     for n in batch_adj_list:
@@ -252,7 +252,7 @@ def get_gap_edge_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch
     # / len(nodes_batch) makes it the same regardless of window size
     # loss = (cut_coeff * left_sum + bal_coeff * bal) / len(nodes_batch)
     # print("edge cut: ", edge_cut)
-    loss = (cut_coeff * edge_cut + bal_coeff * bal)
+    loss = (cut_coeff * edge_cut + edge_bal_coeff * bal)
 
     if step != -1:
         global_step = epoch * num_steps + step + 1
@@ -263,7 +263,7 @@ def get_gap_edge_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch
 
 
 def apply_model(nodes, features, graphSage, classification, unsupervised_loss, b_sz, unsup_loss, device, learn_method,
-                adj_list, num_classes, bfs, epoch, cut_coeff, bal_coeff):
+                adj_list, num_classes, bfs, epoch, cut_coeff, bal_coeff, tensorboard):
     if unsup_loss == 'margin':
         num_neg = 6
     elif unsup_loss == 'normal':
@@ -290,7 +290,6 @@ def apply_model(nodes, features, graphSage, classification, unsupervised_loss, b
         batches = 1
     else:
         batches = math.ceil(len(train_nodes) / b_sz)
-    print("BATCHES ", batches)
     visited_nodes = set()
     for index in range(batches):
         if b_sz == -1:
@@ -322,10 +321,11 @@ def apply_model(nodes, features, graphSage, classification, unsupervised_loss, b
             # loss = loss_sup
         elif learn_method == 'gap':
             loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes,
-                                device=device, epoch=epoch, step=index + 1, num_steps=batches)
+                                device=device, epoch=epoch, step=index + 1, num_steps=batches, tensorboard=tensorboard)
         elif learn_method == 'gap_plus':
             gap_loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch,
-                                    num_classes, device=device, epoch=epoch, step=index + 1, num_steps=batches)
+                                    num_classes, device=device, epoch=epoch, step=index + 1, num_steps=batches,
+                                    tensorboard=tensorboard)
             if unsup_loss == 'margin':
                 loss_net = unsupervised_loss.get_loss_margin(extended_embs_batch, extended_nodes_batch)
             elif unsup_loss == 'normal':
@@ -335,8 +335,8 @@ def apply_model(nodes, features, graphSage, classification, unsupervised_loss, b
 
         elif learn_method == "gap_edge":
             gap_loss = get_gap_edge_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch,
-                                         num_classes,
-                                         device=device, epoch=epoch, step=index + 1, num_steps=batches)
+                                         num_classes, device=device, epoch=epoch, step=index + 1, num_steps=batches,
+                                         tensorboard=tensorboard)
             if unsup_loss == 'margin':
                 loss_net = unsupervised_loss.get_loss_margin(extended_embs_batch, extended_nodes_batch)
             elif unsup_loss == 'normal':

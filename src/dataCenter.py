@@ -32,10 +32,8 @@ class DataCenter(object):
             self.prepare_dataset(dataset, fb_feats_file, fb_edges_file)
 
         elif dataset == "reddit":
-            adj_list_train, train_indexs, adj_list_test, test_indexs, feat_data, train_edges, test_edges = self.load_reddit_data()
-            val_indexs = test_indexs
+            adj_list_train, train_indexs, adj_list_test, test_indexs, adj_list_val, val_indexs, feat_data, train_edges, val_edges, test_edges = self.load_reddit_data()
             feat_data_train = feat_data_test = feat_data_val = feat_data
-            adj_list_val = adj_list_test
 
             setattr(self, dataset + '_test', test_indexs)
             setattr(self, dataset + '_val', val_indexs)
@@ -48,8 +46,9 @@ class DataCenter(object):
             setattr(self, dataset + '_adj_list_train', adj_list_train)
             setattr(self, dataset + '_adj_list_test', adj_list_test)
             setattr(self, dataset + '_adj_list_val', adj_list_val)
-            setattr(self, dataset + 'train_edges', train_edges)
-            setattr(self, dataset + 'test_edges', test_edges)
+            setattr(self, dataset + '_train_edges', train_edges)
+            setattr(self, dataset + '_val_edges', val_edges)
+            setattr(self, dataset + '_test_edges', test_edges)
 
         elif dataset == 'pubmed':
             pubmed_content_file = self.config['file_path.pubmed_paper']
@@ -166,32 +165,45 @@ class DataCenter(object):
 
     def load_reddit_data(self, normalize=True, load_walks=False, prefix="reddit"):
         reddit_edges = pd.read_csv(self.config['file_path.reddit_edges'])
+        reddit_edges_val = pd.read_csv(self.config['file_path.reddit_edges_val'])
         reddit_edges_test = pd.read_csv(self.config['file_path.reddit_edges_test'])
         reddit_feats = np.load(self.config['file_path.reddit_feats'])
 
-        g_train = defaultdict(set)
-        g_test = defaultdict(set)
+        adj_train = defaultdict(set)
+        adj_val = defaultdict(set)
+        adj_test = defaultdict(set)
         train_nodes = set()
+        val_nodes = set()
         test_nodes = set()
         train_edges = []
+        val_edges = []
         test_edges = []
         for i, r in reddit_edges.iterrows():
             e = r["edge"]
             src = int(e.split(",")[0][1:])
             dst = int(e.split(",")[1][1:-1])
             train_edges.append([src, dst])
-            g_train[src].add(dst)
+            adj_train[src].add(dst)
             train_nodes.add(src)
             train_nodes.add(dst)
+        for i, r in reddit_edges_val.iterrows():
+            e = r["edge"]
+            src = int(e.split(",")[0][1:])
+            dst = int(e.split(",")[1][1:-1])
+            val_edges.append([src, dst])
+            adj_val[src].add(dst)
+            val_nodes.add(src)
+            val_nodes.add(dst)
         for i, r in reddit_edges_test.iterrows():
             e = r["edge"]
             src = int(e.split(",")[0][1:])
             dst = int(e.split(",")[1][1:-1])
             test_edges.append([src, dst])
-            g_test[src].add(dst)
+            adj_test[src].add(dst)
             test_nodes.add(src)
             test_nodes.add(dst)
         train_nodes = list(train_nodes)
+        val_nodes = list(val_nodes)
         test_nodes = list(test_nodes)
         if normalize and reddit_feats is not None:
             from sklearn.preprocessing import StandardScaler
@@ -199,7 +211,7 @@ class DataCenter(object):
             scaler.fit(reddit_feats)
             reddit_feats = scaler.transform(reddit_feats)
 
-        return g_train, train_nodes, g_test, test_nodes, reddit_feats, train_edges, test_edges  # class_map
+        return adj_train, train_nodes, adj_test, test_nodes, adj_val, val_nodes, reddit_feats, train_edges, val_edges, test_edges  # class_map
 
     def _split_data(self, num_nodes, test_split=3, val_split=6):
         rand_indices = np.random.permutation(num_nodes)

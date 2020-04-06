@@ -14,8 +14,10 @@ def parser():
     parser.add_argument('--gumbel', type=int, default=0)
     parser.add_argument('--cut_coeff', type=float, default=1.0)
     parser.add_argument('--bal_coeff', type=float, default=1.0)
+    parser.add_argument('--gcn_coeff', type=float, default=1.0)
     parser.add_argument('--num_classes', type=int, default=0)
     parser.add_argument('--bfs', type=int, default=0)
+    parser.add_argument('--graphsage_model', type=str, default="")
     parser.add_argument('--model', type=str, default="")
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--cuda', action='store_true',

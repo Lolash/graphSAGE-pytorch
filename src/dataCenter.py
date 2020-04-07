@@ -32,7 +32,7 @@ class DataCenter(object):
             self.prepare_dataset(dataset, fb_feats_file, fb_edges_file)
 
         elif dataset == "reddit":
-            adj_list_train, train_indexs, adj_list_test, test_indexs, adj_list_val, val_indexs, feat_data, train_edges, val_edges, test_edges = self.load_reddit_data()
+            adj_list_train, train_indexs, adj_list_test, test_indexs, adj_list_val, val_indexs, feat_data, train_edges, val_edges, test_edges, edge_labels = self.load_reddit_data()
             feat_data_train = feat_data_test = feat_data_val = feat_data
 
             setattr(self, dataset + '_test', test_indexs)
@@ -49,6 +49,7 @@ class DataCenter(object):
             setattr(self, dataset + '_train_edges', train_edges)
             setattr(self, dataset + '_val_edges', val_edges)
             setattr(self, dataset + '_test_edges', test_edges)
+            setattr(self, dataset + '_edge_labels', edge_labels)
 
         elif dataset == 'pubmed':
             pubmed_content_file = self.config['file_path.pubmed_paper']
@@ -168,6 +169,7 @@ class DataCenter(object):
         reddit_edges_val = pd.read_csv(self.config['file_path.reddit_edges_val'])
         reddit_edges_test = pd.read_csv(self.config['file_path.reddit_edges_test'])
         reddit_feats = np.load(self.config['file_path.reddit_feats'])
+        reddit_edge_labels = pd.read_csv(self.config['file_path.reddit_edge_labels'])
 
         adj_train = defaultdict(set)
         adj_val = defaultdict(set)
@@ -178,6 +180,7 @@ class DataCenter(object):
         train_edges = []
         val_edges = []
         test_edges = []
+        edge_labels = {}
         for i, r in reddit_edges.iterrows():
             e = r["edge"]
             src = int(e.split(",")[0][1:])
@@ -202,6 +205,13 @@ class DataCenter(object):
             adj_test[src].add(dst)
             test_nodes.add(src)
             test_nodes.add(dst)
+        for i, r in reddit_edge_labels.iterrows():
+            src = r["src"]
+            dst = r["dst"]
+            label = r["label"]
+
+            edge_labels[(src, dst)] = label
+
         train_nodes = list(train_nodes)
         val_nodes = list(val_nodes)
         test_nodes = list(test_nodes)
@@ -211,7 +221,7 @@ class DataCenter(object):
             scaler.fit(reddit_feats)
             reddit_feats = scaler.transform(reddit_feats)
 
-        return adj_train, train_nodes, adj_test, test_nodes, adj_val, val_nodes, reddit_feats, train_edges, val_edges, test_edges  # class_map
+        return adj_train, train_nodes, adj_test, test_nodes, adj_val, val_nodes, reddit_feats, train_edges, val_edges, test_edges, edge_labels  # class_map
 
     def _split_data(self, num_nodes, test_split=3, val_split=6):
         rand_indices = np.random.permutation(num_nodes)

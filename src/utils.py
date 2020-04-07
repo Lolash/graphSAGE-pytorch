@@ -146,12 +146,43 @@ def train_gap_edge(nodes_ids, features, graphSage, classification, ds, adj_list,
             c_optimizer.zero_grad()
 
         # max_vali_f1 = evaluate(dataCenter, ds, graphSage, classification, device, max_vali_f1, name, epoch)
+    
     return classification
 
 
-def train_sup_edge(adj_list, edge_bal_coeff, classification, embs_batch, nodes_batch, num_classes, labels, device,
-                   tensorboard, epoch, step, num_steps):
-    pass
+# b_sz=0 means to take the whole dataset in each epoch
+def train_supervised_edge_partitioning(nodes_ids, features, graphSage, classification, adj_list, num_classes,
+                                       labels, device, tensorboard, b_sz=0, epochs=800):
+    print('Training GAP ...')
+    c_optimizer = torch.optim.Adam(classification.parameters(), lr=7.5e-5)
+    train_nodes = nodes_ids
+
+    for epoch in range(epochs):
+        train_nodes = shuffle(train_nodes)
+        if b_sz <= 0:
+            b_sz = len(train_nodes)
+        batches = math.ceil(len(train_nodes) / b_sz)
+        visited_nodes = set()
+        for index in range(batches):
+            nodes_batch = train_nodes[index * b_sz:(index + 1) * b_sz]
+            visited_nodes |= set(nodes_batch)
+            embs_batch = graphSage(nodes_batch, features, adj_list)
+            loss = get_supervised_partitioning_loss(adj_list, classification, embs_batch, nodes_batch, num_classes,
+                                                    labels, device, tensorboard, epoch, index + 1, batches)
+
+            print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Dealed Nodes [{}/{}] '.format(epoch + 1, epochs, index,
+                                                                                            batches, loss.item(),
+                                                                                            len(visited_nodes),
+                                                                                            len(train_nodes)))
+            global_step = epoch * batches + index + 1
+            tensorboard.add_scalar("supervised_loss", loss.item(), global_step=global_step)
+            loss.backward()
+
+            nn.utils.clip_grad_norm_(classification.parameters(), 5)
+            c_optimizer.step()
+            c_optimizer.zero_grad()
+
+    return classification
 
 
 def get_gap_loss(adj_list, node_bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes, device,
@@ -212,11 +243,20 @@ def get_supervised_partitioning_loss(adj_list, classification, embs_batch, nodes
                                      tensorboard, epoch, step, num_steps):
     node2index = {n: i for i, n in enumerate(nodes_batch)}
     reduced_adj_list = get_reduced_adj_list(nodes_batch, adj_list)
-    edges = [[src, dst] for src in reduced_adj_list for dst in reduced_adj_list[src]]
-    labels = [label for e in edges for label in labels[(e[0], e[1])]]
-
-
-    pass
+    edges = [(src, dst) for src in reduced_adj_list for dst in reduced_adj_list[src]]
+    labels = torch.tensor([labels[(e[0], e[1])] for e in edges])
+    edges_embeddings = []
+    for src, dst in edges:
+        src_emb = embs_batch[node2index[src]]
+        dst_emb = embs_batch[node2index[dst]]
+        # print("SRC EMB SIZE: ", src_emb.size())
+        edge_emb = torch.cat([src_emb, dst_emb], 0)
+        # print("EDGE EMB SIZE: ", edge_emb.size())
+        edges_embeddings.append(edge_emb)
+    edges_embeddings = torch.stack(edges_embeddings)
+    logits = classification(edges_embeddings)
+    criterion = torch.nn.CrossEntropyLoss()
+    return criterion(logits, labels)
 
 
 def get_gap_edge_loss(adj_list, edge_bal_coeff, classification, vertex_cut_coeff, embs_batch, nodes_batch, num_classes,

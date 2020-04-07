@@ -4,7 +4,7 @@ from tensorboardX import SummaryWriter
 from src.args import parser
 from src.dataCenter import *
 from src.models import *
-from src.partition import partition_graph, partition_edge_stream_assign_edges
+from src.partition import partition_graph, partition_edge_stream_assign_edges, partition_edge_stream_gap_edge
 from src.utils import *
 
 print("RUN TRAINED")
@@ -93,6 +93,9 @@ gap.to(device)
 train_edges = getattr(dataCenter, ds + "_train_edges")
 val_edges = getattr(dataCenter, ds + "_val_edges")
 test_edges = getattr(dataCenter, ds + "_test_edges")
-partition_edge_stream_assign_edges(train_edges, adj_list_train, features, graphSage, gap, "train", args)
-partition_edge_stream_assign_edges(val_edges, adj_list_train, features, graphSage, gap, "val", args)
-partition_edge_stream_assign_edges(test_edges, adj_list_train, features, graphSage, gap, "test", args)
+# partition_edge_stream_assign_edges(train_edges, adj_list_train, features, graphSage, gap, "train", args)
+# partition_edge_stream_assign_edges(val_edges, adj_list_train, features, graphSage, gap, "val", args)
+# partition_edge_stream_assign_edges(test_edges, adj_list_train, features, graphSage, gap, "test", args)
+
+partition_edge_stream_gap_edge(train_edges, adj_list_train, features, graphSage, gap, "train", args)
+partition_edge_stream_gap_edge(test_edges, adj_list_train, features, graphSage, gap, "test", args)

@@ -84,7 +84,8 @@ def partition_edge_stream_assign_nodes(edges, training_adj_list, features, graph
 
 def partition_hdrf(edges, num_classes, load_imbalance):
     partial_degrees = defaultdict(lambda: 0)
-    partitions = {c: set() for c in range(num_classes)}
+    edge_partitions = {c: set() for c in range(num_classes)}
+    vertex_partitions = {c: set() for c in range(num_classes)}
     max_size = 0
     min_size = 0
     for src, dst in edges:
@@ -93,41 +94,47 @@ def partition_hdrf(edges, num_classes, load_imbalance):
         dst_deg = partial_degrees[dst]
         max_hdrf = float("-inf")
         max_p = None
-        for k, p in partitions.items():
-            cur_hdrf = hdrf(src, dst, p, partial_degrees, max_size, min_size, load_imbalance)
-            if max_hdrf < hdrf(src, dst, p, partial_degrees, max_size, min_size, load_imbalance):
+        for ep, vp in zip(edge_partitions.items(), vertex_partitions.items()):
+            cur_hdrf = hdrf(src, dst, ep[1], vp[1], partial_degrees, max_size, min_size, load_imbalance)
+            if max_hdrf < hdrf(src, dst, ep[1], vp[1], partial_degrees, max_size, min_size, load_imbalance):
                 max_hdrf = cur_hdrf
-                max_p = k
+                max_p = ep[0]
 
-        partitions[max_p].add((src, dst))
+        edge_partitions[max_p].add((src, dst))
+        vertex_partitions[max_p].add(src)
+        vertex_partitions[max_p].add(dst)
 
         temp_max_size = temp_min_size = None
-        for p in partitions.values():
-            size = len(p)
+        for ep in edge_partitions.values():
+            size = len(ep)
             if temp_max_size is None or size > temp_max_size:
                 temp_max_size = size
             if temp_min_size is None or size < temp_min_size:
                 temp_min_size = size
-    return partitions
+        max_size = temp_max_size
+        min_size = temp_min_size
+    return edge_partitions
 
 
-def hdrf(v1, v2, p, partial_degrees, max_size, min_size, load_imbalance, eps=1):
-    size = len(p)
-    return hdrf_rep(v1, v2, p, partial_degrees) + hdrf_bal(load_imbalance, max_size, min_size, size, eps)
+def hdrf(v1, v2, ep, vp, partial_degrees, max_size, min_size, load_imbalance, eps=1):
+    size = len(ep)
+    return hdrf_rep(v1, v2, vp, partial_degrees) + hdrf_bal(load_imbalance, max_size, min_size, size, eps)
 
 
-def hdrf_bal(load_imbalance, max_size, min_size, size, eps=1):
-    return load_imbalance * (max_size - size) / (eps + max_size - min_size)
+def hdrf_bal(load_imbalance, max_size, min_size, size, eps=0.01):
+    # print("Load imbalance: {}".format(load_imbalance))
+    result = load_imbalance * (max_size - size) / (eps + max_size - min_size)
+    return result
 
 
-def hdrf_rep(v1, v2, p, partial_degrees):
-    g1 = hdrf_g(v1, normalize_degree(partial_degrees[v1], partial_degrees[v2]), p)
-    g2 = hdrf_g(v2, normalize_degree(partial_degrees[v2], partial_degrees[v1]), p)
+def hdrf_rep(v1, v2, vp, partial_degrees):
+    g1 = hdrf_g(v1, normalize_degree(partial_degrees[v1], partial_degrees[v2]), vp)
+    g2 = hdrf_g(v2, normalize_degree(partial_degrees[v2], partial_degrees[v1]), vp)
     return g1 + g2
 
 
-def hdrf_g(v, norm_degree_v, p):
-    if v in p:
+def hdrf_g(v, norm_degree_v, vp):
+    if v in vp:
         return 1 + 1 - norm_degree_v
     else:
         return 0
@@ -139,7 +146,6 @@ def normalize_degree(d1, d2):
 
 def evaluate_edge_partitioning(edges, partitioning, name, num_classes):
     nodes_assignments = defaultdict(set)
-    vertex_cut = 0
     freqs = [0] * num_classes
 
     for e, p in zip(edges, partitioning):
@@ -150,15 +156,14 @@ def evaluate_edge_partitioning(edges, partitioning, name, num_classes):
             nodes_assignments[e[0]].add(p)
         elif p not in nodes_assignments[e[0]]:
             nodes_assignments[e[0]].add(p)
-            vertex_cut += 1
         if e[1] not in nodes_assignments:
             nodes_assignments[e[1]].add(p)
         elif p not in nodes_assignments[e[1]]:
             nodes_assignments[e[1]].add(p)
-            vertex_cut += 1
-    ratio = vertex_cut / len(nodes_assignments)
+    vertex_copies = sum([len(copies) for copies in nodes_assignments.values()])
     print("FREQS of {}: {}".format(name, freqs))
-    print("VERTEX CUT / ALL VERTICES of {}: {}".format(name, ratio))
+    print("NORMALIZED LOAD of {}: {}".format(name, max(freqs) / (len(edges) // num_classes)))
+    print("REPLICATION FACTOR of {}: {}".format(name, vertex_copies / len(nodes_assignments)))
 
 
 def partition_graph(nodes, features, adj_list, name, graphsage, gap, gnn_num_layers, gnn_emb_size, num_labels, args,

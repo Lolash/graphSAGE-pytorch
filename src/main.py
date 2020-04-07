@@ -3,7 +3,7 @@ from tensorboardX import SummaryWriter
 
 from src.dataCenter import *
 from src.models import *
-from src.partition import partition_graph, partition_edge_stream_assign_edges
+from src.partition import partition_graph, partition_edge_stream_assign_edges, partition_edge_stream_gap_edge
 from src.args import parser
 from src.utils import *
 
@@ -84,7 +84,7 @@ if __name__ == '__main__':
                               gcn=args.gcn, agg_func=args.agg_func)
 
     if gap is None:
-        if args.learn_method == "gap_edge" or args.learn_method == "unsup_edge":
+        if args.learn_method == "gap_edge" or args.learn_method == "sup_edge":
             print("DOUBLE EMB SIZE")
             gap = Classification(gnn_emb_size * 2, args.num_classes, device=device, gumbel=args.gumbel)
         else:
@@ -123,7 +123,6 @@ if __name__ == '__main__':
         #     tensorboard.add_scalar("val_gap_loss", val_gap_loss.item(), global_step=epoch)
 
     # val_nodes = [i for i in range(0, 2708)]
-    torch.save(graphSage, filename + ".GRAPHSAGE.torch")
     if args.learn_method == "unsup":
         gap = train_gap(train_nodes, features, graphSage, gap, ds, adj_list_train, epochs=args.gap_epochs,
                         b_sz=args.gap_b_sz, cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff,
@@ -132,17 +131,19 @@ if __name__ == '__main__':
     if args.learn_method == "unsup_edge":
         print("TRAIN UNSUP EDGE")
         gap = train_gap_edge(train_nodes, features, graphSage, gap, ds, adj_list_train, epochs=args.gap_epochs,
-                        b_sz=args.gap_b_sz, cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff,
-                        num_classes=args.num_classes,
-                        device=device, tensorboard=tensorboard)
-    if args.learn_method == "sup_edge":
-        print("TRAIN SUP EDGE")
-        gap = train_gap_edge(train_nodes, features, graphSage, gap, ds, adj_list_train, epochs=args.gap_epochs,
                              b_sz=args.gap_b_sz, cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff,
                              num_classes=args.num_classes,
                              device=device, tensorboard=tensorboard)
+    if args.learn_method == "sup_edge":
+        print("TRAIN SUP EDGE")
+        edge_labels = getattr(dataCenter, ds + "_edge_labels")
+        gap = train_supervised_edge_partitioning(train_nodes, features, graphSage, gap, adj_list_train,
+                                                 args.num_classes, edge_labels,
+                                                 device, tensorboard, args.gap_b_sz,
+                                                 args.gap_epochs)
 
     models = [graphSage, gap]
+    torch.save(graphSage, filename + ".GRAPHSAGE.torch")
     torch.save(models, filename + ".torch")
     torch.save(best_val_models, filename + "BEST-VAL-MODELS.torch")
     # all_nodes = np.random.permutation(len(adj_list_train))
@@ -157,5 +158,7 @@ if __name__ == '__main__':
     #
     train_edges = getattr(dataCenter, ds + "_train_edges")
     test_edges = getattr(dataCenter, ds + "_test_edges")
-    partition_edge_stream_assign_edges(train_edges, adj_list_train, features, graphSage, gap, "train", args)
-    partition_edge_stream_assign_edges(test_edges, adj_list_train, features, graphSage, gap, "test", args)
+    # partition_edge_stream_assign_edges(train_edges, adj_list_train, features, graphSage, gap, "train", args)
+    # partition_edge_stream_assign_edges(test_edges, adj_list_train, features, graphSage, gap, "test", args)
+    partition_edge_stream_gap_edge(train_edges, adj_list_train, features, graphSage, gap, "train", args)
+    partition_edge_stream_gap_edge(test_edges, adj_list_train, features, graphSage, gap, "test", args)

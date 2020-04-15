@@ -7,25 +7,59 @@ import networkx as nx
 import torch
 import numpy as np
 
-from src.utils import get_reduced_adj_list
 
-
-def partition_edge_stream_gap_edge(edges, training_adj_list, features, graphsage, gap, name, args):
+def partition_and_eval_edge_stream_sup_edge(edges, training_adj_list, features, graphsage, classification, name,
+                                            num_classes,
+                                            inference_batch_size):
     assignments = []
-    edges_embeddings = []
-    for e in edges:
-        training_adj_list[e[0]].add(e[1])
-        emb_src = graphsage([e[0]], features, training_adj_list)[0]
-        emb_dst = graphsage([e[1]], features, training_adj_list)[0]
-        training_adj_list[e[0]].remove(e[1])
-        # print("SRC EMB SIZE: ", src_emb.size())
-        edge_emb = torch.cat([emb_src, emb_dst], 0)
-        # print("EDGE EMB SIZE: ", edge_emb.size())
-        edges_embeddings.append(edge_emb)
-    edges_embeddings = torch.stack(edges_embeddings)
-    predicts = gap(edges_embeddings)
-    _, assignments = torch.max(predicts, 1)
-    evaluate_edge_partitioning(edges, assignments, name + "_edge_by_edge", args.num_classes)
+    if inference_batch_size > 0:
+        batches = len(edges) // inference_batch_size
+        print("BATCHES: ", batches)
+        for i in range(batches):
+            edges_embeddings = []
+            batch = edges[i * inference_batch_size:inference_batch_size * (i + 1)]
+            added_edges = []
+            for e in batch:
+                if e[0] not in training_adj_list or e[1] not in training_adj_list[e[0]]:
+                    training_adj_list[e[0]].add(e[1])
+                    added_edges.append((e[0], e[1]))
+            for e in batch:
+                emb_src = graphsage([e[0]], features, training_adj_list)[0]
+                emb_dst = graphsage([e[1]], features, training_adj_list)[0]
+                edge_emb = torch.cat([emb_src, emb_dst], 0)
+                edges_embeddings.append(edge_emb)
+            edges_embeddings = torch.stack(edges_embeddings)
+            predicts = classification(edges_embeddings)
+            _, batch_assignments = torch.max(predicts, 1)
+            assignments += batch_assignments.flatten().tolist()
+            for e in added_edges:
+                training_adj_list[e[0]].remove(e[1])
+                if len(training_adj_list[e[0]]) == 0:
+                    del training_adj_list[e[0]]
+    return evaluate_edge_partitioning(edges, assignments, name + str(inference_batch_size) + "_window",
+                                   num_classes=num_classes)
+
+    # assignments = []
+    # edges_embeddings = []
+    # for e in edges:
+    #     was_added = False
+    #     if e[0] not in training_adj_list or e[1] not in training_adj_list[e[0]]:
+    #         training_adj_list[e[0]].add(e[1])
+    #         was_added = True
+    #     emb_src = graphsage([e[0]], features, training_adj_list)[0]
+    #     emb_dst = graphsage([e[1]], features, training_adj_list)[0]
+    #     if was_added:
+    #         training_adj_list[e[0]].remove(e[1])
+    #         if len(training_adj_list[e[0]]) == 0:
+    #             del training_adj_list[e[0]]
+    #     # print("SRC EMB SIZE: ", src_emb.size())
+    #     edge_emb = torch.cat([emb_src, emb_dst], 0)
+    #     # print("EDGE EMB SIZE: ", edge_emb.size())
+    #     edges_embeddings.append(edge_emb)
+    # edges_embeddings = torch.stack(edges_embeddings)
+    # predicts = classification(edges_embeddings)
+    # _, assignments = torch.max(predicts, 1)
+    # return evaluate_edge_partitioning(edges, assignments, name + "_edge_by_edge", num_classes)
 
 
 def partition_edge_stream_assign_edges(edges, training_adj_list, features, graphsage, gap, name, args):
@@ -116,6 +150,15 @@ def partition_hdrf(edges, num_classes, load_imbalance):
     return edge_partitions
 
 
+def hash_edge_partitioning(edges, name, num_classes):
+    assignments = []
+    cur = 0
+    for e in edges:
+        assignments.append(cur)
+        cur = (cur + 1) % num_classes
+    return assignments
+
+
 def hdrf(v1, v2, ep, vp, partial_degrees, max_size, min_size, load_imbalance, eps=1):
     size = len(ep)
     return hdrf_rep(v1, v2, vp, partial_degrees) + hdrf_bal(load_imbalance, max_size, min_size, size, eps)
@@ -162,8 +205,11 @@ def evaluate_edge_partitioning(edges, partitioning, name, num_classes):
             nodes_assignments[e[1]].add(p)
     vertex_copies = sum([len(copies) for copies in nodes_assignments.values()])
     print("FREQS of {}: {}".format(name, freqs))
-    print("NORMALIZED LOAD of {}: {}".format(name, max(freqs) / (len(edges) // num_classes)))
-    print("REPLICATION FACTOR of {}: {}".format(name, vertex_copies / len(nodes_assignments)))
+    normalized_load = max(freqs) / (len(partitioning) // num_classes)
+    print("NORMALIZED LOAD of {}: {}".format(name, normalized_load))
+    replication_factor = vertex_copies / len(nodes_assignments)
+    print("REPLICATION FACTOR of {}: {}".format(name, replication_factor))
+    return normalized_load, replication_factor
 
 
 def partition_graph(nodes, features, adj_list, name, graphsage, gap, gnn_num_layers, gnn_emb_size, num_labels, args,
@@ -245,3 +291,26 @@ def partition_graph(nodes, features, adj_list, name, graphsage, gap, gnn_num_lay
         time.time())
     nx.nx_pydot.write_dot(graph, filename)
     subprocess.call([r"C:\Program Files (x86)\Graphviz2.38\bin\sfdp.exe", filename, "-Tpng", "-o", filename + ".png"])
+
+
+def get_reduced_adj_list(nodes_batch, adj_list):
+    """ Returns adj_list which contains nodes only from given nodes list. """
+    reduced_adj_list = {}
+
+    for n in nodes_batch:
+        reduced_adj_list[n] = set()
+        for nei in adj_list[n]:
+            if nei in nodes_batch:
+                reduced_adj_list[n].add(nei)
+    return reduced_adj_list
+
+
+def get_edge_cut(graph: nx.Graph):
+    all_edges = len(graph.edges)
+    edge_cuts = 0
+    for n in graph.nodes:
+        for nb in graph.neighbors(n):
+            if graph.nodes[n]["color"] != graph.nodes[nb]["color"]:
+                edge_cuts += 1
+    edge_cuts = edge_cuts / 2
+    return edge_cuts / all_edges

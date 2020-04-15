@@ -1,10 +1,11 @@
+import time
+
 import pyhocon
 from tensorboardX import SummaryWriter
 
 from src.args import parser
 from src.dataCenter import *
 from src.models import *
-from src.partition import partition_graph, partition_edge_stream_assign_edges, partition_edge_stream_gap_edge
 from src.utils import *
 
 print("RUN TRAINED")
@@ -74,14 +75,21 @@ test_nodes = getattr(dataCenter, ds + '_test')
 gnn_num_layers = config['setting.num_layers']
 gnn_emb_size = config['setting.hidden_emb_size']
 
-[graphSage, gap] = torch.load(args.model)
+if args.model != "":
+    [graphSage, classification] = torch.load(args.model)
+elif args.graphsage_model != "" and args.classification_model != "":
+    graphSage = torch.load(args.graphsage_model)
+    classification = torch.load(args.classification_model)
+else:
+    raise Exception("You have to specify a model to run!")
+
 graphSage.to(device)
 
 if args.num_classes == 0:
     num_labels = len(set(getattr(dataCenter, ds + '_labels')))
 else:
     num_labels = args.num_classes
-gap.to(device)
+classification.to(device)
 
 # partition_graph(train_nodes, features, adj_list_train, "train", graphSage, gap, gnn_num_layers, gnn_emb_size,
 #                 num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
@@ -97,5 +105,7 @@ test_edges = getattr(dataCenter, ds + "_test_edges")
 # partition_edge_stream_assign_edges(val_edges, adj_list_train, features, graphSage, gap, "val", args)
 # partition_edge_stream_assign_edges(test_edges, adj_list_train, features, graphSage, gap, "test", args)
 
-partition_edge_stream_gap_edge(train_edges, adj_list_train, features, graphSage, gap, "train", args)
-partition_edge_stream_gap_edge(test_edges, adj_list_train, features, graphSage, gap, "test", args)
+partition_and_eval_edge_stream_sup_edge(train_edges, adj_list_train, features, graphSage, classification, "train",
+                                        args.num_classes, args.inf_b_sz)
+partition_and_eval_edge_stream_sup_edge(test_edges, adj_list_train, features, graphSage, classification, "test",
+                                        args.num_classes, args.inf_b_sz)

@@ -20,6 +20,7 @@ def parser():
     parser.add_argument('--graphsage_model', type=str, default="")
     parser.add_argument('--classification_model', type=str, default="")
     parser.add_argument('--lr', type=float, default=7.5e-5)
+    parser.add_argument('--max_load', type=float, default=float('inf'))
     parser.add_argument('--model', type=str, default="")
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--cuda', action='store_true',

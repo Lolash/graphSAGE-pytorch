@@ -37,7 +37,7 @@ def partition_and_eval_edge_stream_sup_edge(edges, training_adj_list, features, 
                 if len(training_adj_list[e[0]]) == 0:
                     del training_adj_list[e[0]]
         evaluate_edge_partitioning(edges, assignments, name + str(inference_batch_size) + "_window",
-                                      num_classes=num_classes)
+                                   num_classes=num_classes)
 
     assignments = []
     edges_embeddings = []
@@ -66,6 +66,8 @@ def partition_edge_stream_assign_edges(edges, training_adj_list, features, graph
     # 1st version - take an edge, add it to training adj_list, get assignments of two nodes and assign the edge to the
     # partition which had more probability
     assignments = []
+    freqs = [0] * args.num_classes
+
     for e in edges:
         was_added = False
         if e[0] not in training_adj_list or e[1] not in training_adj_list[e[0]]:
@@ -80,16 +82,20 @@ def partition_edge_stream_assign_edges(edges, training_adj_list, features, graph
         values, partitions = torch.max(predicts, 1)
         _, idx = torch.max(values, 0)
         p = partitions[idx.item()].item()
+        perfect_load = (len(assignments) + 1) / args.num_classes
+        p = get_edge_partition(freqs, predicts, perfect_load, args.max_load)
         assignments.append(p)
+    print("MAX LOAD: ", args.max_load)
     evaluate_edge_partitioning(edges, assignments, name + "_edge_by_edge", num_classes=args.num_classes)
 
     # 2nd version - take a window of edges, create new graph from them, get assignments of their ends and assign each
     # edge to the partition of the end's assignment with higher probability
     if args.inf_b_sz > 0:
         assignments = []
+        freqs = [0] * args.num_classes
         batches = len(edges) // args.inf_b_sz
         print("BATCHES: ", batches)
-        for i in range(batches):
+        for i in range(batches+1):
             batch = edges[i * args.inf_b_sz:args.inf_b_sz * (i + 1)]
             added_edges = []
             for e in batch:
@@ -99,15 +105,36 @@ def partition_edge_stream_assign_edges(edges, training_adj_list, features, graph
             for e in batch:
                 embs = graphsage([e[0], e[1]], features, training_adj_list)
                 predicts = gap(embs)
-                values, partitions = torch.max(predicts, 1)
-                _, idx = torch.max(values, 0)
-                p = partitions[idx.item()].item()
+                perfect_load = (len(assignments) + 1) / args.num_classes
+                p = get_edge_partition(freqs, predicts, perfect_load, args.max_load)
                 assignments.append(p)
             for e in added_edges:
                 training_adj_list[e[0]].remove(e[1])
                 if len(training_adj_list[e[0]]) == 0:
                     del training_adj_list[e[0]]
-        evaluate_edge_partitioning(edges, assignments, name + "_window_{}".format(args.inf_b_sz), num_classes=args.num_classes)
+        print("MAX LOAD: ", args.max_load)
+        evaluate_edge_partitioning(edges, assignments, name + "_window_{}".format(args.inf_b_sz),
+                                   num_classes=args.num_classes)
+
+
+def get_edge_partition(freqs, predicts, perfect_load, max_load):
+    values, partitions = torch.max(predicts, 1)
+    _, idx = torch.max(values, 0)
+    p = partitions[idx.item()].item()
+    freqs[p] += 1
+    if get_load_value(freqs, perfect_load) > max_load:
+        freqs[p] -= 1
+        p = partitions[(idx.item() + 1) % 2].item()
+        freqs[p] += 1
+        if get_load_value(freqs, perfect_load) > max_load:
+            freqs[p] -= 1
+            p = freqs.index(min(freqs))
+            freqs[p] += 1
+    return p
+
+
+def get_load_value(freqs, perfect_load):
+    return max(freqs) / perfect_load
 
 
 def partition_edge_stream_assign_nodes(edges, training_adj_list, features, graphsage, gap, name, args):
@@ -201,7 +228,7 @@ def normalize_degree(d1, d2):
 def evaluate_edge_partitioning(edges, partitioning, name, num_classes):
     nodes_assignments = defaultdict(set)
     freqs = [0] * num_classes
-
+    assert len(edges) == len(partitioning)
     for e, p in zip(edges, partitioning):
         if isinstance(p, torch.Tensor):
             p = p.item()

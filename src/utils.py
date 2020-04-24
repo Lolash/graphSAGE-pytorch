@@ -32,9 +32,9 @@ def get_gnn_embeddings(gnn_model, nodes_ids, features, adj_list):
 
 # b_sz=0 means to take the whole dataset in each epoch
 def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_classes, device, tensorboard, b_sz=0,
-              epochs=800, cut_coeff=1, bal_coeff=1):
+              epochs=800, cut_coeff=1, bal_coeff=1, lr=7.5e-5):
     print('Training GAP ...')
-    c_optimizer = torch.optim.Adam(classification.parameters(), lr=7.5e-5)
+    c_optimizer = torch.optim.Adam(classification.parameters(), lr=lr)
     # train classification, detached from the current graph
     # classification.init_params()
     train_nodes = nodes_ids
@@ -56,7 +56,7 @@ def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_
             embs_batch = embs[emb_id_to_node_id]
 
             loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes,
-                                device, epoch=epoch, step=index + 1, tensorboard=tensorboard)
+                                device, epoch=epoch, step=index + 1, num_steps=batches, tensorboard=tensorboard)
             print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Dealed Nodes [{}/{}] '.format(epoch + 1, epochs, index,
                                                                                             batches, loss.item(),
                                                                                             len(visited_nodes),

@@ -119,7 +119,7 @@ class DataCenter(object):
         with open(feats_file) as fp:
             for i, line in enumerate(fp):
                 info = line.strip().split()
-                feat_data.append([float(x) for x in info[1:]])
+                feat_data.append([float(x) for x in info[1:-1]])
                 node_map[info[0]] = i
         feat_data = np.asarray(feat_data)
         test_indexs, val_indexs, train_indexs = self._split_data(feat_data.shape[0])

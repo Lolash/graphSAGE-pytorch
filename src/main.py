@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 
 import pyhocon
 from tensorboardX import SummaryWriter
@@ -9,7 +10,7 @@ from src.models import *
 from src.utils import *
 
 args = parser().parse_args()
-filename = "ds-{}_{}_mb-{}_e-{}_ge-{}_gmb-{}_inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}-num_classes-{}-bfs-{}-{}.dot".format(
+filename = "ds-{}_{}_mb-{}_e-{}_ge-{}_gmb-{}_inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}-num_classes-{}-bfs-{}-lr-{}-{}.dot".format(
     args.dataSet,
     args.learn_method,
     args.b_sz,
@@ -23,7 +24,8 @@ filename = "ds-{}_{}_mb-{}_e-{}_ge-{}_gmb-{}_inf-mb-{}_gumbel-{}_cut-{}_bal-{}_a
     args.agg_func,
     args.num_classes,
     args.bfs,
-    time.time())
+    args.lr,
+    datetime.now().strftime('%b%d_%H-%M-%S'))
 tensorboard = SummaryWriter("./runs/" + filename)
 
 if torch.cuda.is_available():
@@ -67,9 +69,10 @@ if __name__ == '__main__':
     val_nodes = getattr(dataCenter, ds + "_val")
     test_nodes = getattr(dataCenter, ds + '_test')
 
-    train_edges = getattr(dataCenter, ds + "_train_edges")
-    val_edges = getattr(dataCenter, ds + "_val_edges")
-    test_edges = getattr(dataCenter, ds + "_test_edges")
+    if ds in ["fb", "reddit"]:
+        train_edges = getattr(dataCenter, ds + "_train_edges")
+        val_edges = getattr(dataCenter, ds + "_val_edges")
+        test_edges = getattr(dataCenter, ds + "_test_edges")
 
     gnn_num_layers = config['setting.num_layers']
     gnn_emb_size = config['setting.hidden_emb_size']
@@ -107,7 +110,8 @@ if __name__ == '__main__':
     best_val_models = [graphSage, classification]
     for epoch in range(args.epochs):
         print('----------------------EPOCH %d-----------------------' % epoch)
-        graphSage, classification = apply_model(nodes=train_nodes, features=features, graphSage=graphSage, classification=classification,
+        graphSage, classification = apply_model(nodes=train_nodes, features=features, graphSage=graphSage,
+                                                classification=classification,
                                                 unsupervised_loss=unsupervised_loss, adj_list=train_adj_list, args=args,
                                                 epoch=epoch, tensorboard=tensorboard, device=device)
         # if (epoch + 1) % 2 == 0 and args.learn_method == 'unsup':
@@ -125,15 +129,20 @@ if __name__ == '__main__':
 
     # val_nodes = [i for i in range(0, 2708)]
     if args.learn_method == "unsup":
-        classification = train_gap(train_nodes, features, graphSage, classification, ds, train_adj_list, epochs=args.gap_epochs,
+        classification = train_gap(train_nodes, features, graphSage, classification, ds, train_adj_list,
+                                   epochs=args.gap_epochs,
                                    b_sz=args.gap_b_sz, cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff,
                                    num_classes=args.num_classes,
                                    device=device, tensorboard=tensorboard)
     if args.learn_method == "sup_edge":
+        if ds not in ["fb", "reddit"]:
+            raise Exception("You have to specify edge-based dataset.")
         print("TRAIN SUP EDGE")
         edge_labels = getattr(dataCenter, ds + "_edge_labels")
-        classification = train_supervised_edge_partitioning(train_edges, features, graphSage, classification, train_adj_list,
-                                                            args.num_classes, edge_labels, args.cut_coeff, args.bal_coeff,
+        classification = train_supervised_edge_partitioning(train_edges, features, graphSage, classification,
+                                                            train_adj_list,
+                                                            args.num_classes, edge_labels, args.cut_coeff,
+                                                            args.bal_coeff,
                                                             device, tensorboard, args.gap_b_sz,
                                                             args.gap_epochs, val_edges, features, filename)
 
@@ -154,7 +163,7 @@ if __name__ == '__main__':
 
     # partition_edge_stream_assign_edges(train_edges, adj_list_train, features, graphSage, gap, "train", args)
     # partition_edge_stream_assign_edges(test_edges, adj_list_train, features, graphSage, gap, "test", args)
-    partition_and_eval_edge_stream_sup_edge(train_edges, train_adj_list, features, graphSage, classification, "train",
-                                            args.num_classes, -1)
-    partition_and_eval_edge_stream_sup_edge(test_edges, train_adj_list, features, graphSage, classification, "test",
-                                            args.num_classes, -1)
+    # partition_and_eval_edge_stream_sup_edge(train_edges, train_adj_list, features, graphSage, classification, "train",
+    #                                         args.num_classes, -1)
+    # partition_and_eval_edge_stream_sup_edge(test_edges, train_adj_list, features, graphSage, classification, "test",
+    #                                         args.num_classes, -1)

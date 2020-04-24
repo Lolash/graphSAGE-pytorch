@@ -6,6 +6,7 @@ from tensorboardX import SummaryWriter
 from src.args import parser
 from src.dataCenter import *
 from src.models import *
+from src.partition import partition_graph, partition_edge_stream_assign_edges
 from src.utils import *
 
 print("RUN TRAINED")
@@ -91,21 +92,34 @@ else:
     num_labels = args.num_classes
 classification.to(device)
 
-# partition_graph(train_nodes, features, adj_list_train, "train", graphSage, gap, gnn_num_layers, gnn_emb_size,
-#                 num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
-# partition_graph(val_nodes, features, adj_list_val, "val", graphSage, gap, gnn_num_layers, gnn_emb_size,
-#                 num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
-# partition_graph(test_nodes, features, adj_list_test, "test", graphSage, gap, gnn_num_layers, gnn_emb_size,
-#                 num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
+if args.learn_method in ["unsup", "gap", "gap_plus"]:
+    partition_graph(train_nodes, features, adj_list_train, "train", graphSage, classification, gnn_num_layers,
+                    gnn_emb_size,
+                    num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
+    partition_graph(val_nodes, features, adj_list_val, "val", graphSage, classification, gnn_num_layers, gnn_emb_size,
+                    num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
+    partition_graph(test_nodes, features, adj_list_test, "test", graphSage, classification, gnn_num_layers,
+                    gnn_emb_size,
+                    num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
+    if ds in ["fb", "reddit"]:
+        train_edges = getattr(dataCenter, ds + "_train_edges")
+        val_edges = getattr(dataCenter, ds + "_val_edges")
+        test_edges = getattr(dataCenter, ds + "_test_edges")
+        partition_edge_stream_assign_edges(train_edges, adj_list_train, features, graphSage, classification, "train", args)
+        partition_edge_stream_assign_edges(val_edges, adj_list_train, features, graphSage, classification, "val", args)
+        partition_edge_stream_assign_edges(test_edges, adj_list_train, features, graphSage, classification, "test", args)
 
-train_edges = getattr(dataCenter, ds + "_train_edges")
-val_edges = getattr(dataCenter, ds + "_val_edges")
-test_edges = getattr(dataCenter, ds + "_test_edges")
-# partition_edge_stream_assign_edges(train_edges, adj_list_train, features, graphSage, gap, "train", args)
-# partition_edge_stream_assign_edges(val_edges, adj_list_train, features, graphSage, gap, "val", args)
-# partition_edge_stream_assign_edges(test_edges, adj_list_train, features, graphSage, gap, "test", args)
+elif args.learn_method == "sup_edge" and ds in ["fb", "reddit"]:
+    train_edges = getattr(dataCenter, ds + "_train_edges")
+    val_edges = getattr(dataCenter, ds + "_val_edges")
+    test_edges = getattr(dataCenter, ds + "_test_edges")
+    partition_and_eval_edge_stream_sup_edge(train_edges, adj_list_train, features, graphSage, classification, "train",
+                                            args.num_classes, args.inf_b_sz)
+    partition_and_eval_edge_stream_sup_edge(test_edges, adj_list_train, features, graphSage, classification, "test",
+                                            args.num_classes, args.inf_b_sz)
+    partition_and_eval_edge_stream_sup_edge(test_edges, defaultdict(set), features, graphSage, classification,
+                                            "test-no-train-edges",
+                                            args.num_classes, args.inf_b_sz)
 
-partition_and_eval_edge_stream_sup_edge(train_edges, adj_list_train, features, graphSage, classification, "train",
-                                        args.num_classes, args.inf_b_sz)
-partition_and_eval_edge_stream_sup_edge(test_edges, adj_list_train, features, graphSage, classification, "test",
-                                        args.num_classes, args.inf_b_sz)
+else:
+    raise Exception("Unsupported learn method.")

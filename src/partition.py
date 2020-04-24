@@ -36,30 +36,30 @@ def partition_and_eval_edge_stream_sup_edge(edges, training_adj_list, features, 
                 training_adj_list[e[0]].remove(e[1])
                 if len(training_adj_list[e[0]]) == 0:
                     del training_adj_list[e[0]]
-    return evaluate_edge_partitioning(edges, assignments, name + str(inference_batch_size) + "_window",
-                                   num_classes=num_classes)
+        evaluate_edge_partitioning(edges, assignments, name + str(inference_batch_size) + "_window",
+                                      num_classes=num_classes)
 
-    # assignments = []
-    # edges_embeddings = []
-    # for e in edges:
-    #     was_added = False
-    #     if e[0] not in training_adj_list or e[1] not in training_adj_list[e[0]]:
-    #         training_adj_list[e[0]].add(e[1])
-    #         was_added = True
-    #     emb_src = graphsage([e[0]], features, training_adj_list)[0]
-    #     emb_dst = graphsage([e[1]], features, training_adj_list)[0]
-    #     if was_added:
-    #         training_adj_list[e[0]].remove(e[1])
-    #         if len(training_adj_list[e[0]]) == 0:
-    #             del training_adj_list[e[0]]
-    #     # print("SRC EMB SIZE: ", src_emb.size())
-    #     edge_emb = torch.cat([emb_src, emb_dst], 0)
-    #     # print("EDGE EMB SIZE: ", edge_emb.size())
-    #     edges_embeddings.append(edge_emb)
-    # edges_embeddings = torch.stack(edges_embeddings)
-    # predicts = classification(edges_embeddings)
-    # _, assignments = torch.max(predicts, 1)
-    # return evaluate_edge_partitioning(edges, assignments, name + "_edge_by_edge", num_classes)
+    assignments = []
+    edges_embeddings = []
+    for e in edges:
+        was_added = False
+        if e[0] not in training_adj_list or e[1] not in training_adj_list[e[0]]:
+            training_adj_list[e[0]].add(e[1])
+            was_added = True
+        emb_src = graphsage([e[0]], features, training_adj_list)[0]
+        emb_dst = graphsage([e[1]], features, training_adj_list)[0]
+        if was_added:
+            training_adj_list[e[0]].remove(e[1])
+            if len(training_adj_list[e[0]]) == 0:
+                del training_adj_list[e[0]]
+        # print("SRC EMB SIZE: ", src_emb.size())
+        edge_emb = torch.cat([emb_src, emb_dst], 0)
+        # print("EDGE EMB SIZE: ", edge_emb.size())
+        edges_embeddings.append(edge_emb)
+    edges_embeddings = torch.stack(edges_embeddings)
+    predicts = classification(edges_embeddings)
+    _, assignments = torch.max(predicts, 1)
+    return evaluate_edge_partitioning(edges, assignments, name + "_edge_by_edge", num_classes)
 
 
 def partition_edge_stream_assign_edges(edges, training_adj_list, features, graphsage, gap, name, args):
@@ -67,9 +67,15 @@ def partition_edge_stream_assign_edges(edges, training_adj_list, features, graph
     # partition which had more probability
     assignments = []
     for e in edges:
-        training_adj_list[e[0]].add(e[1])
+        was_added = False
+        if e[0] not in training_adj_list or e[1] not in training_adj_list[e[0]]:
+            training_adj_list[e[0]].add(e[1])
+            was_added = True
         embs = graphsage([e[0], e[1]], features, training_adj_list)
-        training_adj_list[e[0]].remove(e[1])
+        if was_added:
+            training_adj_list[e[0]].remove(e[1])
+            if len(training_adj_list[e[0]]) == 0:
+                del training_adj_list[e[0]]
         predicts = gap(embs)
         values, partitions = torch.max(predicts, 1)
         _, idx = torch.max(values, 0)
@@ -85,8 +91,11 @@ def partition_edge_stream_assign_edges(edges, training_adj_list, features, graph
         print("BATCHES: ", batches)
         for i in range(batches):
             batch = edges[i * args.inf_b_sz:args.inf_b_sz * (i + 1)]
+            added_edges = []
             for e in batch:
-                training_adj_list[e[0]].add(e[1])
+                if e[0] not in training_adj_list or e[1] not in training_adj_list[e[0]]:
+                    training_adj_list[e[0]].add(e[1])
+                    added_edges.append((e[0], e[1]))
             for e in batch:
                 embs = graphsage([e[0], e[1]], features, training_adj_list)
                 predicts = gap(embs)
@@ -94,9 +103,11 @@ def partition_edge_stream_assign_edges(edges, training_adj_list, features, graph
                 _, idx = torch.max(values, 0)
                 p = partitions[idx.item()].item()
                 assignments.append(p)
-            for e in batch:
+            for e in added_edges:
                 training_adj_list[e[0]].remove(e[1])
-        evaluate_edge_partitioning(edges, assignments, name + "_window", num_classes=args.num_classes)
+                if len(training_adj_list[e[0]]) == 0:
+                    del training_adj_list[e[0]]
+        evaluate_edge_partitioning(edges, assignments, name + "_window_{}".format(args.inf_b_sz), num_classes=args.num_classes)
 
 
 def partition_edge_stream_assign_nodes(edges, training_adj_list, features, graphsage, gap, name, args):
@@ -261,36 +272,36 @@ def partition_graph(nodes, features, adj_list, name, graphsage, gap, gnn_num_lay
     print(cardinalities)
     print(balanced)
     print(cardinalities - balanced)
-    balancedness = 1 - ((cardinalities - balanced) ** 2).mean()
+    balancedness = max(cardinalities) / int(len(graph.nodes) / num_labels)
 
-    perf = nx.algorithms.community.performance(graph, partitions.values())
-    coverage = nx.algorithms.community.coverage(graph, partitions.values())
+    # perf = nx.algorithms.community.performance(graph, partitions.values())
+    # coverage = nx.algorithms.community.coverage(graph, partitions.values())
 
-    print("Performance of {}: {}".format(name, perf))
-    print("Coverage of {}: {}".format(name, coverage))
+    # print("Performance of {}: {}".format(name, perf))
+    # print("Coverage of {}: {}".format(name, coverage))
     print("Balancedness of {}: {}".format(name, balancedness))
-    print("Edge cut of {}: {}".format(name, 1 - coverage))
-
-    filename = "ds-{}_gnn_layers-{}_gnn_emb_size-{}_{}_mb-{}_e-{}_ge-{}_gmb-{}__inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}_num_classes-{}_bfs-{}_{}-{}.dot".format(
-        args.dataSet,
-        gnn_num_layers,
-        gnn_emb_size,
-        args.learn_method,
-        args.b_sz,
-        args.epochs,
-        args.gap_epochs,
-        args.gap_b_sz,
-        args.inf_b_sz,
-        args.gumbel,
-        args.cut_coeff,
-        args.bal_coeff,
-        args.agg_func,
-        args.num_classes,
-        args.bfs,
-        name,
-        time.time())
-    nx.nx_pydot.write_dot(graph, filename)
-    subprocess.call([r"C:\Program Files (x86)\Graphviz2.38\bin\sfdp.exe", filename, "-Tpng", "-o", filename + ".png"])
+    print("Edge cut of {}: {}".format(name, get_edge_cut(graph)))
+    #
+    # filename = "ds-{}_gnn_layers-{}_gnn_emb_size-{}_{}_mb-{}_e-{}_ge-{}_gmb-{}__inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}_num_classes-{}_bfs-{}_{}-{}.dot".format(
+    #     args.dataSet,
+    #     gnn_num_layers,
+    #     gnn_emb_size,
+    #     args.learn_method,
+    #     args.b_sz,
+    #     args.epochs,
+    #     args.gap_epochs,
+    #     args.gap_b_sz,
+    #     args.inf_b_sz,
+    #     args.gumbel,
+    #     args.cut_coeff,
+    #     args.bal_coeff,
+    #     args.agg_func,
+    #     args.num_classes,
+    #     args.bfs,
+    #     name,
+    #     time.time())
+    # nx.nx_pydot.write_dot(graph, filename)
+    # subprocess.call([r"C:\Program Files (x86)\Graphviz2.38\bin\sfdp.exe", filename, "-Tpng", "-o", filename + ".png"])
 
 
 def get_reduced_adj_list(nodes_batch, adj_list):

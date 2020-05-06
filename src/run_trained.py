@@ -93,14 +93,15 @@ else:
 classification.to(device)
 
 if args.learn_method in ["unsup", "gap", "gap_plus"]:
-    partition_graph(train_nodes, features, adj_list_train, "train", graphSage, classification, gnn_num_layers,
-                    gnn_emb_size,
-                    num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
-    partition_graph(val_nodes, features, adj_list_val, "val", graphSage, classification, gnn_num_layers, gnn_emb_size,
-                    num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
-    partition_graph(test_nodes, features, adj_list_test, "test", graphSage, classification, gnn_num_layers,
-                    gnn_emb_size,
-                    num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
+    if not args.only_edges:
+        partition_graph(train_nodes, features, adj_list_train, "train", graphSage, classification, gnn_num_layers,
+                        gnn_emb_size,
+                        num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
+        partition_graph(val_nodes, features, adj_list_val, "val", graphSage, classification, gnn_num_layers, gnn_emb_size,
+                        num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
+        partition_graph(test_nodes, features, adj_list_test, "test", graphSage, classification, gnn_num_layers,
+                        gnn_emb_size,
+                        num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
     if ds in ["fb", "reddit"]:
         train_edges = getattr(dataCenter, ds + "_train_edges")
         val_edges = getattr(dataCenter, ds + "_val_edges")

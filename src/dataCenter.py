@@ -33,7 +33,8 @@ class DataCenter(object):
 
         elif dataset == "reddit":
             adj_list_train, train_indexs, adj_list_test, test_indexs, adj_list_val, val_indexs, feat_data, train_edges, val_edges, test_edges, edge_labels = self.load_reddit_data()
-            feat_data_train = feat_data_test = feat_data_val = feat_data
+            feat_data_train = feat_data[train_indexs]
+            feat_data_test = feat_data_val = feat_data
 
             setattr(self, dataset + '_test', test_indexs)
             setattr(self, dataset + '_val', val_indexs)

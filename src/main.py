@@ -55,9 +55,9 @@ if __name__ == '__main__':
     dataCenter = DataCenter(config)
     dataCenter.load_dataSet(ds)
     features = torch.FloatTensor(getattr(dataCenter, ds + '_feats')).to(device)
-    train_features = torch.FloatTensor(getattr(dataCenter, ds + '_feats_train')).to(device)
-    test_features = torch.FloatTensor(getattr(dataCenter, ds + '_feats_test')).to(device)
-    val_features = torch.FloatTensor(getattr(dataCenter, ds + '_feats_val')).to(device)
+    # train_features = torch.FloatTensor(getattr(dataCenter, ds + '_feats_train')).to(device)
+    # test_features = torch.FloatTensor(getattr(dataCenter, ds + '_feats_test')).to(device)
+    # val_features = torch.FloatTensor(getattr(dataCenter, ds + '_feats_val')).to(device)
 
     # self, num_layers, input_size, out_size, device, gcn=False, agg_func='MEAN')
     adj_list = getattr(dataCenter, ds + '_adj_list')

@@ -2,6 +2,7 @@ import math
 import subprocess
 import time
 from collections import defaultdict
+from tqdm import tqdm
 
 import networkx as nx
 import torch
@@ -65,20 +66,23 @@ def partition_and_eval_edge_stream_sup_edge(edges, training_adj_list, features, 
 def partition_edge_stream_assign_edges(edges, training_adj_list, features, graphsage, gap, name, args):
     # 1st version - take an edge, add it to training adj_list, get assignments of two nodes and assign the edge to the
     # partition which had more probability
+    print("START PARTITIONING")
     assignments = []
     freqs = [0] * args.num_classes
-
-    for e in edges:
+    print(type(edges).__name__)
+    for e in tqdm(edges):
         was_added = False
         if e[0] not in training_adj_list or e[1] not in training_adj_list[e[0]]:
             training_adj_list[e[0]].add(e[1])
             was_added = True
-        embs = graphsage([e[0], e[1]], features, training_adj_list)
+        with torch.no_grad():
+            embs = graphsage([e[0], e[1]], features, training_adj_list)
         if was_added:
             training_adj_list[e[0]].remove(e[1])
             if len(training_adj_list[e[0]]) == 0:
                 del training_adj_list[e[0]]
-        predicts = gap(embs)
+        with torch.no_grad():
+            predicts = gap(embs)
         values, partitions = torch.max(predicts, 1)
         _, idx = torch.max(values, 0)
         p = partitions[idx.item()].item()
@@ -95,7 +99,7 @@ def partition_edge_stream_assign_edges(edges, training_adj_list, features, graph
         freqs = [0] * args.num_classes
         batches = len(edges) // args.inf_b_sz
         print("BATCHES: ", batches)
-        for i in range(batches+1):
+        for i in tqdm(range(batches+1)):
             batch = edges[i * args.inf_b_sz:args.inf_b_sz * (i + 1)]
             added_edges = []
             for e in batch:
@@ -103,8 +107,9 @@ def partition_edge_stream_assign_edges(edges, training_adj_list, features, graph
                     training_adj_list[e[0]].add(e[1])
                     added_edges.append((e[0], e[1]))
             for e in batch:
-                embs = graphsage([e[0], e[1]], features, training_adj_list)
-                predicts = gap(embs)
+                with torch.no_grad():
+                    embs = graphsage([e[0], e[1]], features, training_adj_list)
+                    predicts = gap(embs)
                 perfect_load = (len(assignments) + 1) / args.num_classes
                 p = get_edge_partition(freqs, predicts, perfect_load, args.max_load)
                 assignments.append(p)

@@ -351,6 +351,7 @@ class GraphSage(nn.Module):
             if index > 1:
                 nb = self._nodes_map(nb, pre_hidden_embs, pre_neighs)
             # self.dc.logger.info('sage_layer.')
+            # print(pre_hidden_embs)
             cur_hidden_embs = sage_layer(self_feats=pre_hidden_embs[nb],
                                          aggregate_feats=aggregate_feats)
             pre_hidden_embs = cur_hidden_embs
@@ -409,7 +410,8 @@ class GraphSage(nn.Module):
         if self.agg_func == 'MEAN':
             # print("mask ", mask)
             num_neigh = mask.sum(1, keepdim=True)
-            mask = mask.div(num_neigh).to(embed_matrix.device)
+            mask = torch.div(mask, num_neigh).to(embed_matrix.device)
+            # mask = mask.div(num_neigh).to(embed_matrix.device)
             # trick to remove NaNs in case num_neigh was 0
             mask[mask != mask] = 0
             aggregate_feats = mask.mm(embed_matrix)

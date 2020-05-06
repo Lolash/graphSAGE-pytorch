@@ -143,27 +143,35 @@ def get_gap_loss(adj_list, node_bal_coeff, classification, cut_coeff, embs_batch
         for nb in nbs:
             A[node2index[node]][node2index[nb]] = 1
     # print(A)
-    A = torch.tensor(A, dtype=torch.float)
+    A = torch.tensor(A, dtype=torch.float, device=device)
+    A.to(device)
     # print(torch.sum(A, 1))
-    assert (torch.sum(A, 1).equal(D))
+    # assert (torch.sum(A, 1).equal(D))
     A.requires_grad = False
     gamma = logists.T @ D
+    gamma.to(device)
 
     y_div_gamma = logists / gamma
+    y_div_gamma.to(device)
     # print("y/gamma: ", y_div_gamma)
     # print("y/gamma[0]: ", y_div_gamma[0])
     one_minus_Y_T = (1 - logists).T
+    one_minus_Y_T.to(device)
     mm = y_div_gamma @ one_minus_Y_T
+    mm.to(device)
     # print("MM: ", mm)
     times_adj_matrix = mm * A
+    times_adj_matrix.to(device)
     # print("TIMES A: ", times_adj_matrix)
     left_sum = times_adj_matrix.sum()
+    left_sum.to(device)
     # print("LEFT SUM: ", left_sum)
     num_nodes = len(nodes_batch)
     cluster_size = torch.sum(logists, dim=0).to(device)
     ground_truth = torch.tensor([num_nodes / float(num_classes)] * num_classes).to(device)
     mse_loss = torch.nn.modules.loss.MSELoss()
     node_bal = mse_loss(ground_truth, cluster_size)
+    node_bal.to(device)
 
     # print("Bal: ", bal)
     # / len(nodes_batch) makes it the same regardless of window size

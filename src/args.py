@@ -32,4 +32,6 @@ def parser():
     parser.add_argument('--name', type=str, default='debug')
     parser.add_argument('--config', type=str, default='./src/experiments.conf')
 
+    parser.add_argument('--only_edges', action='store_true')
+
     return parser

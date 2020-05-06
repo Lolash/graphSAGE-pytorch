@@ -69,7 +69,6 @@ def partition_edge_stream_assign_edges(edges, training_adj_list, features, graph
     print("START PARTITIONING")
     assignments = []
     freqs = [0] * args.num_classes
-    print(type(edges).__name__)
     for e in tqdm(edges):
         was_added = False
         if e[0] not in training_adj_list or e[1] not in training_adj_list[e[0]]:
@@ -106,13 +105,17 @@ def partition_edge_stream_assign_edges(edges, training_adj_list, features, graph
                 if e[0] not in training_adj_list or e[1] not in training_adj_list[e[0]]:
                     training_adj_list[e[0]].add(e[1])
                     added_edges.append((e[0], e[1]))
-            for e in batch:
-                with torch.no_grad():
-                    embs = graphsage([e[0], e[1]], features, training_adj_list)
-                    predicts = gap(embs)
-                perfect_load = (len(assignments) + 1) / args.num_classes
-                p = get_edge_partition(freqs, predicts, perfect_load, args.max_load)
-                assignments.append(p)
+
+            starts = [e[0] for e in batch]
+            ends = [e[1] for e in batch]
+            with torch.no_grad():
+                start_embs = graphsage(starts, features, training_adj_list)
+                end_embs = graphsage(ends, features, training_adj_list)
+                for s, e in zip(start_embs, end_embs):
+                    predicts = gap(torch.tensor([s, e]))
+                    perfect_load = (len(assignments) + 1) / args.num_classes
+                    p = get_edge_partition(freqs, predicts, perfect_load, args.max_load)
+                    assignments.append(p)
             for e in added_edges:
                 training_adj_list[e[0]].remove(e[1])
                 if len(training_adj_list[e[0]]) == 0:

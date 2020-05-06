@@ -386,14 +386,11 @@ class GraphSage(nn.Module):
         assert len(nodes) == len(samp_neighs)
         indicator = [(nodes[i] in samp_neighs[i]) for i in range(len(samp_neighs))]
         assert (False not in indicator)
-        if not self.gcn:
-            samp_neighs = [(samp_neighs[i] - set([nodes[i]])) for i in range(len(samp_neighs))]
-        # self.dc.logger.info('2')
-        # print("samp neights after subtraction: ", samp_neighs)
-        # print("nodes: ", nodes)
-        # print("len nodes: ", len(nodes))
-        # print("len unique nodes: ", len(unique_nodes_list))
-        # print("pre_hidden_embs len: ", len(pre_hidden_embs))
+
+        # Delete self loops
+        # if not self.gcn:
+        #     samp_neighs = [(samp_neighs[i] - set([nodes[i]])) for i in range(len(samp_neighs))]
+
         if len(pre_hidden_embs) == len(unique_nodes):
             embed_matrix = pre_hidden_embs
         else:
@@ -417,11 +414,9 @@ class GraphSage(nn.Module):
             aggregate_feats = mask.mm(embed_matrix)
 
         elif self.agg_func == 'MAX':
-            # print(mask)
             mask[mask != mask] = 0
-            indexs = [x.nonzero() for x in mask == 1]
+            indexs = [x.nonzero() for x in mask]
             aggregate_feats = []
-            # self.dc.logger.info('5')
             for feat in [embed_matrix[x.squeeze()] for x in indexs]:
                 if len(feat.size()) == 1:
                     aggregate_feats.append(feat.view(1, -1))

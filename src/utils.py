@@ -204,8 +204,6 @@ def get_supervised_partitioning_loss(adj_list, classification, embs_batch, nodes
     mse_loss = torch.nn.modules.loss.MSELoss()
     bal = mse_loss(ground_truth, cluster_size)
     partitioning = torch.nn.CrossEntropyLoss()
-    print(logits)
-    print(labels)
     partitioning_loss = partitioning(logits, labels)
     if step != -1:
         global_step = epoch * num_steps + step

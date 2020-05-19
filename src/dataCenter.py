@@ -5,11 +5,13 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import json
+import sklearn
 import sys
 import os
 
 import networkx as nx
 from networkx.readwrite import json_graph
+from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, MultiLabelBinarizer
 
 
 class DataCenter(object):
@@ -33,8 +35,7 @@ class DataCenter(object):
 
         elif dataset == "reddit":
             adj_list_train, train_indexs, adj_list_test, test_indexs, adj_list_val, val_indexs, feat_data, train_edges, val_edges, test_edges, edge_labels = self.load_reddit_data()
-            feat_data_train = feat_data[train_indexs]
-            feat_data_test = feat_data_val = feat_data
+            feat_data_train = feat_data_test = feat_data_val = feat_data
 
             setattr(self, dataset + '_test', test_indexs)
             setattr(self, dataset + '_val', val_indexs)
@@ -51,6 +52,40 @@ class DataCenter(object):
             setattr(self, dataset + '_val_edges', val_edges)
             setattr(self, dataset + '_test_edges', test_edges)
             setattr(self, dataset + '_edge_labels', edge_labels)
+
+        elif dataset == "twitch":
+            twitch_feature_file = self.config['file_path.twitch_feats']
+            twitch_edge_file = self.config['file_path.twitch_edges']
+            twitch_edge_labels_file = self.config['file_path.twitch_edge_labels']
+
+            twitch_val_feature_file = self.config['file_path.twitch_val_feats']
+            twitch_val_edge_file = self.config['file_path.twitch_val_edges']
+
+            twitch_test_feature_file = self.config['file_path.twitch_test_feats']
+            twitch_test_edge_file = self.config['file_path.twitch_test_edges']
+
+            adj_list_train, train_features, train_edges, train_labels = self.get_twitch_data(twitch_edge_file, twitch_feature_file, twitch_edge_labels_file)
+            adj_list_val, val_features, val_edges, _ = self.get_twitch_data(twitch_val_edge_file, twitch_val_feature_file)
+            adj_list_test, test_features, test_edges, _ = self.get_twitch_data(twitch_test_edge_file,
+                                                                            twitch_test_feature_file)
+
+            setattr(self, dataset + '_train', [int(n) for n in adj_list_train.keys()])
+            setattr(self, dataset + '_feats_train', train_features)
+            setattr(self, dataset + '_adj_list_train', adj_list_train)
+
+            setattr(self, dataset + '_val', [int(n) for n in adj_list_val.keys()])
+            setattr(self, dataset + '_feats_val', val_features)
+            setattr(self, dataset + '_adj_list_val', adj_list_val)
+
+            setattr(self, dataset + '_test', [int(n) for n in adj_list_test.keys()])
+            setattr(self, dataset + '_feats_test', test_features)
+            setattr(self, dataset + '_adj_list_test', adj_list_test)
+
+            setattr(self, dataset + '_train_edges', train_edges)
+            setattr(self, dataset + '_val_edges', val_edges)
+            setattr(self, dataset + '_test_edges', test_edges)
+
+            setattr(self, dataset + '_edge_labels', train_labels)
 
         elif dataset == 'pubmed':
             pubmed_content_file = self.config['file_path.pubmed_paper']
@@ -109,6 +144,38 @@ class DataCenter(object):
             setattr(self, dataset + '_feats', feat_data)
             setattr(self, dataset + '_labels', labels)
             setattr(self, dataset + '_adj_lists', adj_list_train)
+
+    def get_twitch_data(self, twitch_edge_file, twitch_feature_file, twitch_edge_labels=None):
+        feature_dim = 3170  # maximum feature id of all twitch datasets
+        features_raw = json.load(open(twitch_feature_file))
+        node2idx = {}
+        features = []
+        raw_values = [i for v in features_raw.values() for i in v]
+        for i, it in enumerate(features_raw.items()):
+            node2idx[int(it[0])] = i
+            feats = np.zeros(feature_dim)
+            feats[[int(val) for val in it[1]]] = 1
+            features.append(feats)
+        features = np.asarray([np.asarray(f) for f in features])
+        edges_raw = pd.read_csv(twitch_edge_file)
+        edges = edges_raw.values.tolist()
+        edges = list(map(lambda x: [int(x[0]), int(x[1])], edges))
+        adj_list = defaultdict(set)
+        for e in edges:
+            adj_list[node2idx[int(e[0])]].add(node2idx[int(e[1])])
+            adj_list[node2idx[int(e[1])]].add(node2idx[int(e[0])])
+        edge_labels = {}
+        if twitch_edge_labels is not None:
+            twitch_edge_labels = pd.read_csv(self.config['file_path.twitch_edge_labels'])
+            for i, r in twitch_edge_labels.iterrows():
+                src = r["src"]
+                dst = r["dst"]
+                label = r["label"]
+
+                edge_labels[(src, dst)] = label
+                edge_labels[(dst, src)] = label
+
+        return adj_list, features, edges, edge_labels
 
     def prepare_dataset(self, dataset, feats_file, edges_file):
         adj_list_train = defaultdict(set)

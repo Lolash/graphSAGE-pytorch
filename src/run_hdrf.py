@@ -13,7 +13,7 @@ parser.add_argument('--output_file', type=str, default='')
 args = parser.parse_args()
 
 
-def parse_edges(edges):
+def parse_reddit_edges(edges):
     parsed = []
     for i, r in edges.iterrows():
         e = r["edge"]
@@ -23,7 +23,16 @@ def parse_edges(edges):
     return parsed
 
 
-edges = parse_edges(pd.read_csv(args.input_file))
+def parse_twitch_edges(edges):
+    edges = edges.values.tolist()
+    edges = list(map(lambda x: [int(x[0]), int(x[1])], edges))
+    return edges
+
+
+if "reddit" in args.input_file:
+    edges = parse_reddit_edges(pd.read_csv(args.input_file))
+else:
+    edges = parse_twitch_edges(pd.read_csv(args.input_file))
 
 partitions = partition_hdrf(edges, args.num_classes, args.load_imbalance)
 

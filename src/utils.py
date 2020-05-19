@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.utils import shuffle
-from src.partition import partition_and_eval_edge_stream_sup_edge, get_reduced_adj_list
+from src.partition import get_reduced_adj_list
 
 
 def evaluate(adj_list, val_nodes, features, graphSage, gap, device, args):
@@ -73,13 +73,18 @@ def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_
 
 # b_sz=0 means to take the whole dataset in each epoch
 def train_supervised_edge_partitioning(train_edges, train_features, graphSage, classification, train_adj_list,
-                                       num_classes,
-                                       labels, cut_coeff, bal_coeff, device, tensorboard, b_sz, epochs, val_edges,
-                                       val_features, filename):
-    c_optimizer = torch.optim.Adam(classification.parameters(), lr=7.5e-5)
+                                       num_classes, labels, cut_coeff, bal_coeff, device, tensorboard, b_sz, epochs,
+                                       lr):
+    models = [graphSage, classification]
+    params = []
+    for model in models:
+        for param in model.parameters():
+            if param.requires_grad:
+                params.append(param)
 
-    best_val_loss = None
-    best_val_model = None
+    optimizer = torch.optim.Adam(params, lr=lr)
+    for model in models:
+        model.zero_grad()
     for epoch in range(epochs):
         train_edges = shuffle(train_edges)
         if b_sz <= 0:
@@ -92,8 +97,9 @@ def train_supervised_edge_partitioning(train_edges, train_features, graphSage, c
             visited_edges += len(edges_batch)
             embs_batch = graphSage(nodes_batch, train_features, train_adj_list)
             supervised_loss = get_supervised_partitioning_loss(train_adj_list, classification, embs_batch, nodes_batch,
-                                                               num_classes,
-                                                               labels, cut_coeff, bal_coeff, device, tensorboard, epoch,
+                                                               edges_batch,
+                                                               num_classes, labels, cut_coeff, bal_coeff, device,
+                                                               tensorboard, epoch,
                                                                index + 1, batches)
 
             print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Dealed Edges [{}/{}] '.format(epoch + 1, epochs, index,
@@ -106,22 +112,13 @@ def train_supervised_edge_partitioning(train_edges, train_features, graphSage, c
             tensorboard.add_scalar("supervised_loss", supervised_loss.item(), global_step=global_step)
             supervised_loss.backward()
 
-            nn.utils.clip_grad_norm_(classification.parameters(), 5)
-            c_optimizer.step()
-            c_optimizer.zero_grad()
+            # nn.utils.clip_grad_norm_(classification.parameters(), 5)
+            optimizer.step()
+            optimizer.zero_grad()
+            for model in models:
+                model.zero_grad()
 
-        if epoch % 10 == 0:
-            normalized_load, replication_factor = partition_and_eval_edge_stream_sup_edge(val_edges, train_adj_list,
-                                                                                          val_features, graphSage,
-                                                                                          classification, "VAL",
-                                                                                          num_classes, -1)
-            tensorboard.add_scalar("val_norm_load", normalized_load, global_step=epoch)
-            tensorboard.add_scalar("val_replication_factor", replication_factor, global_step=epoch)
-            loss = normalized_load + replication_factor
-            tensorboard.add_scalar("val_partitioning_quality", loss, global_step=epoch)
-            torch.save(classification, filename + "_EPOCH-{}-loss-{}".format(epoch, loss))
-
-    return classification
+    return classification, graphSage
 
 
 def get_gap_loss(adj_list, node_bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes, device,
@@ -186,15 +183,13 @@ def get_gap_loss(adj_list, node_bal_coeff, classification, cut_coeff, embs_batch
     return loss
 
 
-def get_supervised_partitioning_loss(adj_list, classification, embs_batch, nodes_batch, num_classes, labels, cut_coeff,
-                                     bal_coeff, device,
-                                     tensorboard, epoch, step, num_steps):
+def get_supervised_partitioning_loss(adj_list, classification, embs_batch, nodes_batch, edges_batch, num_classes,
+                                     labels, cut_coeff,
+                                     bal_coeff, device, tensorboard, epoch, step, num_steps):
     node2index = {n: i for i, n in enumerate(nodes_batch)}
-    reduced_adj_list = get_reduced_adj_list(nodes_batch, adj_list)
-    edges = [(src, dst) for src in reduced_adj_list for dst in reduced_adj_list[src]]
-    labels = torch.tensor([labels[(e[0], e[1])] for e in edges])
+    labels = torch.tensor([labels[(e[0], e[1])] for e in edges_batch]).to(device)
     edges_embeddings = []
-    for src, dst in edges:
+    for src, dst in edges_batch:
         src_emb = embs_batch[node2index[src]]
         dst_emb = embs_batch[node2index[dst]]
         # print("SRC EMB SIZE: ", src_emb.size())
@@ -202,13 +197,15 @@ def get_supervised_partitioning_loss(adj_list, classification, embs_batch, nodes
         # print("EDGE EMB SIZE: ", edge_emb.size())
         edges_embeddings.append(edge_emb)
     edges_embeddings = torch.stack(edges_embeddings)
-    logits = classification(edges_embeddings)
-    num_edges = len(edges)
+    logits = classification(edges_embeddings).to(device)
+    num_edges = len(edges_batch)
     cluster_size = torch.sum(logits, dim=0).to(device)
     ground_truth = torch.tensor([num_edges / float(num_classes)] * num_classes).to(device)
     mse_loss = torch.nn.modules.loss.MSELoss()
     bal = mse_loss(ground_truth, cluster_size)
     partitioning = torch.nn.CrossEntropyLoss()
+    print(logits)
+    print(labels)
     partitioning_loss = partitioning(logits, labels)
     if step != -1:
         global_step = epoch * num_steps + step

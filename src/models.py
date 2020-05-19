@@ -301,6 +301,7 @@ class SageLayer(nn.Module):
             combined = torch.cat([self_feats, aggregate_feats], dim=1)
         else:
             combined = aggregate_feats
+        combined = combined.float()
         combined = F.relu(self.weight.mm(combined.t())).t()
         return combined
 
@@ -349,7 +350,7 @@ class GraphSage(nn.Module):
             aggregate_feats = self.aggregate(nb, pre_hidden_embs, pre_neighs)
             sage_layer = getattr(self, 'sage_layer' + str(index))
             if index > 1:
-                nb = self._nodes_map(nb, pre_hidden_embs, pre_neighs)
+                nb = self._nodes_map(nb, pre_neighs)
             # self.dc.logger.info('sage_layer.')
             # print(pre_hidden_embs)
             cur_hidden_embs = sage_layer(self_feats=pre_hidden_embs[nb],
@@ -358,7 +359,7 @@ class GraphSage(nn.Module):
 
         return pre_hidden_embs
 
-    def _nodes_map(self, nodes, hidden_embs, neighs):
+    def _nodes_map(self, nodes, neighs):
         layer_nodes, samp_neighs, layer_nodes_dict = neighs
         assert len(samp_neighs) == len(nodes)
         index = [layer_nodes_dict[x] for x in nodes]

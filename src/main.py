@@ -10,13 +10,13 @@ from src.models import *
 from src.utils import *
 
 args = parser().parse_args()
-filename = "ds-{}_{}_mb-{}_e-{}_ge-{}_gmb-{}_inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}-num_classes-{}-bfs-{}-lr-{}-{}.dot".format(
+filename = "ds-{}_{}_mb-{}_e-{}_se-{}_smb-{}_inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}-num_classes-{}-bfs-{}-lr-{}-{}.dot".format(
     args.dataSet,
     args.learn_method,
     args.b_sz,
     args.epochs,
-    args.gap_epochs,
-    args.gap_b_sz,
+    args.sup_epochs,
+    args.sup_b_sz,
     args.inf_b_sz,
     args.gumbel,
     args.cut_coeff,
@@ -54,20 +54,10 @@ if __name__ == '__main__':
     ds = args.dataSet
     dataCenter = DataCenter(config)
     dataCenter.load_dataSet(ds)
-    features = torch.FloatTensor(getattr(dataCenter, ds + '_feats')).to(device)
-    # train_features = torch.FloatTensor(getattr(dataCenter, ds + '_feats_train')).to(device)
-    # test_features = torch.FloatTensor(getattr(dataCenter, ds + '_feats_test')).to(device)
-    # val_features = torch.FloatTensor(getattr(dataCenter, ds + '_feats_val')).to(device)
-
-    # self, num_layers, input_size, out_size, device, gcn=False, agg_func='MEAN')
-    adj_list = getattr(dataCenter, ds + '_adj_list')
+    train_features = torch.from_numpy(getattr(dataCenter, ds + '_feats_train')).to(device)
     train_adj_list = getattr(dataCenter, ds + '_adj_list_train')
-    val_adj_list = getattr(dataCenter, ds + '_adj_list_val')
-    test_adj_list = getattr(dataCenter, ds + '_adj_list_test')
 
     train_nodes = getattr(dataCenter, ds + "_train")
-    val_nodes = getattr(dataCenter, ds + "_val")
-    test_nodes = getattr(dataCenter, ds + '_test')
 
     if ds in ["fb", "reddit"]:
         train_edges = getattr(dataCenter, ds + "_train_edges")
@@ -87,7 +77,7 @@ if __name__ == '__main__':
         if args.graphsage_model != "":
             graphSage = torch.load(args.graphsage_model)
         else:
-            graphSage = GraphSage(gnn_num_layers, features.size(1), gnn_emb_size,
+            graphSage = GraphSage(gnn_num_layers, train_features.size(1), gnn_emb_size,
                                   device,
                                   gcn=args.gcn, agg_func=args.agg_func)
         if args.classification_model != "":
@@ -110,7 +100,7 @@ if __name__ == '__main__':
     best_val_models = [graphSage, classification]
     for epoch in range(args.epochs):
         print('----------------------EPOCH %d-----------------------' % epoch)
-        graphSage, classification = apply_model(nodes=train_nodes, features=features, graphSage=graphSage,
+        graphSage, classification = apply_model(nodes=train_nodes, features=train_features, graphSage=graphSage,
                                                 classification=classification,
                                                 unsupervised_loss=unsupervised_loss, adj_list=train_adj_list, args=args,
                                                 epoch=epoch, tensorboard=tensorboard, device=device)
@@ -128,42 +118,21 @@ if __name__ == '__main__':
         #     tensorboard.add_scalar("val_gap_loss", val_gap_loss.item(), global_step=epoch)
 
     # val_nodes = [i for i in range(0, 2708)]
-    if args.learn_method == "unsup":
-        classification = train_gap(train_nodes, features, graphSage, classification, ds, train_adj_list,
-                                   epochs=args.gap_epochs,
-                                   b_sz=args.gap_b_sz, cut_coeff=args.cut_coeff, bal_coeff=args.bal_coeff,
-                                   num_classes=args.num_classes,
-                                   device=device, tensorboard=tensorboard)
     if args.learn_method == "sup_edge":
-        if ds not in ["fb", "reddit"]:
+        if ds not in ["fb", "reddit", "twitch"]:
             raise Exception("You have to specify edge-based dataset.")
         print("TRAIN SUP EDGE")
+        train_edges = getattr(dataCenter, ds + "_train_edges")
         edge_labels = getattr(dataCenter, ds + "_edge_labels")
-        classification = train_supervised_edge_partitioning(train_edges, features, graphSage, classification,
-                                                            train_adj_list,
-                                                            args.num_classes, edge_labels, args.cut_coeff,
-                                                            args.bal_coeff,
-                                                            device, tensorboard, args.gap_b_sz,
-                                                            args.gap_epochs, val_edges, features, filename)
+        classification, graphSage = train_supervised_edge_partitioning(train_edges, train_features, graphSage,
+                                                                       classification,
+                                                                       train_adj_list,
+                                                                       args.num_classes, edge_labels, args.cut_coeff,
+                                                                       args.bal_coeff,
+                                                                       device, tensorboard, args.sup_b_sz,
+                                                                       args.sup_epochs, args.lr)
 
     models = [graphSage, classification]
     torch.save(graphSage, filename + ".GRAPHSAGE.torch")
     torch.save(models, filename + ".torch")
     torch.save(best_val_models, filename + "BEST-VAL-MODELS.torch")
-    # all_nodes = np.random.permutation(len(adj_list_train))
-
-    # partition_graph(train_nodes, features, adj_list_train, "train", graphSage, gap, gnn_num_layers, gnn_emb_size,
-    #                 num_labels=args.num_classes, args=args, tensorboard=tensorboard, batch_size=args.inf_b_sz)
-    # partition_graph(val_nodes, features, adj_list_val, "val", graphSage, gap, gnn_num_layers, gnn_emb_size,
-    #                 num_labels=args.num_classes, args=args, tensorboard=tensorboard, batch_size=args.inf_b_sz)
-    # partition_graph(test_nodes, features, adj_list_test, "test", graphSage, gap, gnn_num_layers, gnn_emb_size,
-    #                 num_labels=args.num_classes, args=args, tensorboard=tensorboard, batch_size=args.inf_b_sz)
-    # # # partition_graph(all_nodes, "all", graphSage, gap)
-    #
-
-    # partition_edge_stream_assign_edges(train_edges, adj_list_train, features, graphSage, gap, "train", args)
-    # partition_edge_stream_assign_edges(test_edges, adj_list_train, features, graphSage, gap, "test", args)
-    # partition_and_eval_edge_stream_sup_edge(train_edges, train_adj_list, features, graphSage, classification, "train",
-    #                                         args.num_classes, -1)
-    # partition_and_eval_edge_stream_sup_edge(test_edges, train_adj_list, features, graphSage, classification, "test",
-    #                                         args.num_classes, -1)

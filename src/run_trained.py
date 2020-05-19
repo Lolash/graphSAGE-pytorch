@@ -11,13 +11,13 @@ from src.utils import *
 
 print("RUN TRAINED")
 args = parser().parse_args()
-filename = "ds-{}_{}_mb-{}_e-{}_ge-{}_gmb-{}_inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}-num_classes-{}-bfs-{}-{}.dot".format(
+filename = "ds-{}_{}_mb-{}_e-{}_se-{}_smb-{}_inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}-num_classes-{}-bfs-{}-{}.dot".format(
     args.dataSet,
     args.learn_method,
     args.b_sz,
     args.epochs,
-    args.gap_epochs,
-    args.gap_b_sz,
+    args.sup_epochs,
+    args.sup_b_sz,
     args.inf_b_sz,
     args.gumbel,
     args.cut_coeff,
@@ -59,19 +59,14 @@ config = pyhocon.ConfigFactory.parse_file(args.config)
 ds = args.dataSet
 dataCenter = DataCenter(config)
 dataCenter.load_dataSet(ds)
-features = torch.FloatTensor(getattr(dataCenter, ds + '_feats')).to(device)
+features_train = torch.FloatTensor(getattr(dataCenter, ds + '_feats_train')).to(device)
 features_test = torch.FloatTensor(getattr(dataCenter, ds + '_feats_test')).to(device)
 features_val = torch.FloatTensor(getattr(dataCenter, ds + '_feats_val')).to(device)
 
 # self, num_layers, input_size, out_size, device, gcn=False, agg_func='MEAN')
-adj_list = getattr(dataCenter, ds + '_adj_list')
 adj_list_train = getattr(dataCenter, ds + "_adj_list_train")
 adj_list_val = getattr(dataCenter, ds + '_adj_list_val')
 adj_list_test = getattr(dataCenter, ds + '_adj_list_test')
-
-train_nodes = getattr(dataCenter, ds + "_train")
-val_nodes = getattr(dataCenter, ds + "_val")
-test_nodes = getattr(dataCenter, ds + '_test')
 
 gnn_num_layers = config['setting.num_layers']
 gnn_emb_size = config['setting.hidden_emb_size']
@@ -92,35 +87,43 @@ else:
     num_labels = args.num_classes
 classification.to(device)
 
-if args.learn_method in ["unsup", "gap", "gap_plus"]:
+graphSage_total_params = sum(p.numel() for p in graphSage.parameters())
+class_total_params = sum(p.numel() for p in classification.parameters())
+print("TOTAL MODEL PARAMS: {}".format(graphSage_total_params + class_total_params))
+
+if args.learn_method in ["unsup", "gap", "gap_plus", "sup_edge"]:
     if not args.only_edges:
-        partition_graph(train_nodes, features, adj_list_train, "train", graphSage, classification, gnn_num_layers,
+        train_nodes = getattr(dataCenter, ds + "_train")
+        val_nodes = getattr(dataCenter, ds + "_val")
+        test_nodes = getattr(dataCenter, ds + '_test')
+
+        partition_graph(train_nodes, features_train, adj_list_train, "train", graphSage, classification, gnn_num_layers,
                         gnn_emb_size,
                         num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
-        partition_graph(val_nodes, features, adj_list_val, "val", graphSage, classification, gnn_num_layers, gnn_emb_size,
+        partition_graph(val_nodes, features_train, adj_list_val, "val", graphSage, classification, gnn_num_layers,
+                        gnn_emb_size,
                         num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
-        partition_graph(test_nodes, features, adj_list_test, "test", graphSage, classification, gnn_num_layers,
+        partition_graph(test_nodes, features_train, adj_list_test, "test", graphSage, classification, gnn_num_layers,
                         gnn_emb_size,
                         num_labels=num_labels, args=args, batch_size=args.inf_b_sz)
     if ds in ["fb", "reddit"]:
         train_edges = getattr(dataCenter, ds + "_train_edges")
         val_edges = getattr(dataCenter, ds + "_val_edges")
         test_edges = getattr(dataCenter, ds + "_test_edges")
-        partition_edge_stream_assign_edges(train_edges, adj_list_train, features, graphSage, classification, "train", args)
-        partition_edge_stream_assign_edges(val_edges, adj_list_train, features, graphSage, classification, "val", args)
-        partition_edge_stream_assign_edges(test_edges, adj_list_train, features, graphSage, classification, "test", args)
-
-elif args.learn_method == "sup_edge" and ds in ["fb", "reddit"]:
-    train_edges = getattr(dataCenter, ds + "_train_edges")
-    val_edges = getattr(dataCenter, ds + "_val_edges")
-    test_edges = getattr(dataCenter, ds + "_test_edges")
-    partition_and_eval_edge_stream_sup_edge(train_edges, adj_list_train, features, graphSage, classification, "train",
-                                            args.num_classes, args.inf_b_sz)
-    partition_and_eval_edge_stream_sup_edge(test_edges, adj_list_train, features, graphSage, classification, "test",
-                                            args.num_classes, args.inf_b_sz)
-    partition_and_eval_edge_stream_sup_edge(test_edges, defaultdict(set), features, graphSage, classification,
-                                            "test-no-train-edges",
-                                            args.num_classes, args.inf_b_sz)
+        partition_edge_stream_assign_edges(train_edges, adj_list_train, features_train, graphSage, classification, "train",
+                                           args)
+        partition_edge_stream_assign_edges(val_edges, adj_list_train, features_train, graphSage, classification, "val", args)
+        partition_edge_stream_assign_edges(test_edges, adj_list_train, features_train, graphSage, classification, "test",
+                                           args)
+    if ds in ["twitch"]:
+        train_edges = getattr(dataCenter, ds + "_train_edges")
+        val_edges = getattr(dataCenter, ds + "_val_edges")
+        test_edges = getattr(dataCenter, ds + "_test_edges")
+        partition_edge_stream_assign_edges(train_edges, defaultdict(set), features_train, graphSage, classification, "train",
+                                           args, True)
+        partition_edge_stream_assign_edges(val_edges, defaultdict(set), features_val, graphSage, classification, "val", args, True)
+        partition_edge_stream_assign_edges(test_edges, defaultdict(set), features_test, graphSage, classification, "test",
+                                           args, True)
 
 else:
     raise Exception("Unsupported learn method.")

@@ -1,12 +1,10 @@
 import math
 import sys
 
-import networkx as nx
 import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.utils import shuffle
-from src.partition import get_reduced_adj_list
 
 
 def evaluate(adj_list, val_nodes, features, graphSage, gap, device, args):

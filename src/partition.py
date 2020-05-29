@@ -9,7 +9,7 @@ import torch
 import numpy as np
 
 
-def partition_edge_stream_assign_edges(edges, adj_list, features, graphsage, gap, name, args, sorted_partitioning, bidirectional=False):
+def partition_edge_stream_assign_edges(edges, adj_list, features, graphsage, gap, name, args, bidirectional=False):
     # 1st version - take an edge, add it to training adj_list, get assignments of two nodes and assign the edge to the
     # partition which had more probability
     print("START PARTITIONING")
@@ -59,7 +59,8 @@ def _partition_edges_one_by_one(adj_list, args, assignments, bidirectional, edge
         with torch.no_grad():
             predicts = gap(embs)
         perfect_load = (len(assignments) + 1) / args.num_classes
-        p = _get_assigned_partition(args.learn_method, args.max_load, freqs, perfect_load, predicts)
+        p = _get_assigned_partition(args.learn_method, args.max_load, freqs, perfect_load, predicts,
+                                    args.sorted_inference)
         assignments.append(p)
 
 
@@ -87,7 +88,8 @@ def _partition_edges_in_batches(adj_list, args, assignments, bidirectional, batc
                     embs = graphsage([e[0], e[1]], features, adj_list)
                 predicts = gap(embs)
             perfect_load = (len(assignments) + 1) / args.num_classes
-            p = _get_assigned_partition(args.learn_method, args.max_load, freqs, perfect_load, predicts)
+            p = _get_assigned_partition(args.learn_method, args.max_load, freqs, perfect_load, predicts,
+                                        args.sorted_inference)
             assignments.append(p)
         for e in added_edges:
             adj_list[e[0]].remove(e[1])
@@ -100,11 +102,11 @@ def _partition_edges_in_batches(adj_list, args, assignments, bidirectional, batc
     print("MAX LOAD: ", args.max_load)
 
 
-def _get_assigned_partition(learn_method, max_load, freqs, perfect_load, predicts):
+def _get_assigned_partition(learn_method, max_load, freqs, perfect_load, predicts, sorted_inference):
     if learn_method == "sup_edge":
-        p = _get_edge_partition_from_edge(freqs, predicts, perfect_load, max_load)
+        p = _get_edge_partition_from_edge(freqs, predicts, perfect_load, max_load, sorted_inference)
     else:
-        p = _get_edge_partition_from_two_nodes(freqs, predicts, perfect_load, max_load)
+        p = _get_edge_partition_from_two_nodes(freqs, predicts, perfect_load, max_load, sorted_inference)
     return p
 
 

@@ -9,7 +9,7 @@ import torch
 import numpy as np
 
 
-def partition_edge_stream_assign_edges(edges, adj_list, features, graphsage, gap, name, args, bidirectional=False):
+def partition_edge_stream_assign_edges(edges, adj_list, features, graphsage, gap, name, args, sorted_partitioning, bidirectional=False):
     # 1st version - take an edge, add it to training adj_list, get assignments of two nodes and assign the edge to the
     # partition which had more probability
     print("START PARTITIONING")
@@ -108,25 +108,58 @@ def _get_assigned_partition(learn_method, max_load, freqs, perfect_load, predict
     return p
 
 
-def _get_edge_partition_from_edge(freqs, predicts, perfect_load, max_load):
+def _get_edge_partition_from_edge(freqs, predicts, perfect_load, max_load, sorted_inference):
     sorted_partitions = torch.argsort(predicts, descending=True)
-
-    for p in sorted_partitions.flatten().split(1):
-        p = p.item()
+    if sorted_inference:
+        for p in sorted_partitions.flatten().split(1):
+            p = p.item()
+            freqs[p] += 1
+            if get_load_value(freqs, perfect_load) < max_load:
+                return p
+            else:
+                freqs[p] -= 1
+        p = freqs.index(min(freqs))
+        freqs[p] += 1
+        return p
+    else:
+        p = sorted_partitions[0].item()
         freqs[p] += 1
         if get_load_value(freqs, perfect_load) < max_load:
             return p
         else:
             freqs[p] -= 1
-    p = freqs.index(min(freqs))
-    freqs[p] += 1
-    return p
+            p = freqs.index(min(freqs))
+            freqs[p] += 1
+            return p
 
 
-def _get_edge_partition_from_two_nodes(freqs, predicts, perfect_load, max_load):
+def _get_edge_partition_from_two_nodes(freqs, predicts, perfect_load, max_load, sorted_inference):
     classes_sorted = torch.argsort(predicts, descending=True)
-    for e1, e2 in zip(classes_sorted[0].flatten().split(1), classes_sorted[1].flatten().split(1)):
-        if e1.item() > e2.item():
+    if sorted_inference:
+        for e1, e2 in zip(classes_sorted[0].flatten().split(1), classes_sorted[1].flatten().split(1)):
+            if predicts[0][e1.item()] > predicts[1][e2.item()]:
+                p = e1.item()
+            else:
+                p = e2.item()
+            freqs[p] += 1
+            if get_load_value(freqs, perfect_load) < max_load:
+                return p
+            else:
+                freqs[p] -= 1
+                p = e1.item() if p == e2.item() else e2.item()
+                freqs[p] += 1
+                if get_load_value(freqs, perfect_load) < max_load:
+                    return p
+                freqs[p] -= 1
+
+        p = freqs.index(min(freqs))
+        freqs[p] += 1
+
+        return p
+    else:
+        e1 = classes_sorted[0][0]
+        e2 = classes_sorted[1][0]
+        if predicts[0][e1.item()] > predicts[1][e2.item()]:
             p = e1.item()
         else:
             p = e2.item()
@@ -141,10 +174,10 @@ def _get_edge_partition_from_two_nodes(freqs, predicts, perfect_load, max_load):
                 return p
             freqs[p] -= 1
 
-    p = freqs.index(min(freqs))
-    freqs[p] += 1
+        p = freqs.index(min(freqs))
+        freqs[p] += 1
 
-    return p
+        return p
 
 
 def get_load_value(freqs, perfect_load):

@@ -64,10 +64,50 @@ class DataCenter(object):
             twitch_test_feature_file = self.config['file_path.twitch_test_feats']
             twitch_test_edge_file = self.config['file_path.twitch_test_edges']
 
-            adj_list_train, train_features, train_edges, train_labels = self.get_twitch_data(twitch_edge_file, twitch_feature_file, twitch_edge_labels_file)
-            adj_list_val, val_features, val_edges, _ = self.get_twitch_data(twitch_val_edge_file, twitch_val_feature_file)
+            adj_list_train, train_features, train_edges, train_labels = self.get_twitch_data(twitch_edge_file,
+                                                                                             twitch_feature_file,
+                                                                                             twitch_edge_labels_file)
+            adj_list_val, val_features, val_edges, _ = self.get_twitch_data(twitch_val_edge_file,
+                                                                            twitch_val_feature_file)
             adj_list_test, test_features, test_edges, _ = self.get_twitch_data(twitch_test_edge_file,
-                                                                            twitch_test_feature_file)
+                                                                               twitch_test_feature_file)
+
+            setattr(self, dataset + '_train', [int(n) for n in adj_list_train.keys()])
+            setattr(self, dataset + '_feats_train', train_features)
+            setattr(self, dataset + '_adj_list_train', adj_list_train)
+
+            setattr(self, dataset + '_val', [int(n) for n in adj_list_val.keys()])
+            setattr(self, dataset + '_feats_val', val_features)
+            setattr(self, dataset + '_adj_list_val', adj_list_val)
+
+            setattr(self, dataset + '_test', [int(n) for n in adj_list_test.keys()])
+            setattr(self, dataset + '_feats_test', test_features)
+            setattr(self, dataset + '_adj_list_test', adj_list_test)
+
+            setattr(self, dataset + '_train_edges', train_edges)
+            setattr(self, dataset + '_val_edges', val_edges)
+            setattr(self, dataset + '_test_edges', test_edges)
+
+            setattr(self, dataset + '_edge_labels', train_labels)
+
+        elif dataset == 'deezer':
+            deezer_feature_file = self.config['file_path.deezer_feats']
+            deezer_edge_file = self.config['file_path.deezer_edges']
+            deezer_edge_labels_file = self.config['file_path.deezer_edge_labels']
+
+            deezer_val_feature_file = self.config['file_path.deezer_val_feats']
+            deezer_val_edge_file = self.config['file_path.deezer_val_edges']
+
+            deezer_test_feature_file = self.config['file_path.deezer_test_feats']
+            deezer_test_edge_file = self.config['file_path.deezer_test_edges']
+
+            adj_list_train, train_features, train_edges, train_labels = self.get_deezer_data(deezer_edge_file,
+                                                                                             deezer_feature_file,
+                                                                                             deezer_edge_labels_file)
+            adj_list_val, val_features, val_edges, _ = self.get_deezer_data(deezer_val_edge_file,
+                                                                            deezer_val_feature_file)
+            adj_list_test, test_features, test_edges, _ = self.get_deezer_data(deezer_test_edge_file,
+                                                                               deezer_test_feature_file)
 
             setattr(self, dataset + '_train', [int(n) for n in adj_list_train.keys()])
             setattr(self, dataset + '_feats_train', train_features)
@@ -145,6 +185,29 @@ class DataCenter(object):
             setattr(self, dataset + '_labels', labels)
             setattr(self, dataset + '_adj_lists', adj_list_train)
 
+    def get_deezer_data(self, deezer_edge_file, deezer_feature_file, deezer_edge_labels=None):
+        deezer_edges = pd.read_csv(deezer_edge_file)
+        deezer_feats = np.load(deezer_feature_file)
+
+        adj_list = defaultdict(set)
+        deezer_edges = deezer_edges.values.tolist()
+        for e in deezer_edges:
+            adj_list[int(e[0])].add(int(e[1]))
+            adj_list[int(e[1])].add(int(e[0]))
+
+        edge_labels = {}
+        if deezer_edge_labels is not None:
+            deezer_edge_labels = pd.read_csv(deezer_edge_labels)
+            for i, r in deezer_edge_labels.iterrows():
+                src = r["src"]
+                dst = r["dst"]
+                label = r["label"]
+
+                edge_labels[(src, dst)] = label
+                edge_labels[(dst, src)] = label
+
+        return adj_list, deezer_feats, deezer_edges, edge_labels
+
     def get_twitch_data(self, twitch_edge_file, twitch_feature_file, twitch_edge_labels=None):
         feature_dim = 3170  # maximum feature id of all twitch datasets
         features_raw = json.load(open(twitch_feature_file))
@@ -166,7 +229,7 @@ class DataCenter(object):
             adj_list[node2idx[int(e[1])]].add(node2idx[int(e[0])])
         edge_labels = {}
         if twitch_edge_labels is not None:
-            twitch_edge_labels = pd.read_csv(self.config['file_path.twitch_edge_labels'])
+            twitch_edge_labels = pd.read_csv(twitch_edge_labels)
             for i, r in twitch_edge_labels.iterrows():
                 src = r["src"]
                 dst = r["dst"]

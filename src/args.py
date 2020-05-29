@@ -33,5 +33,5 @@ def parser():
     parser.add_argument('--config', type=str, default='./src/experiments.conf')
 
     parser.add_argument('--only_edges', action='store_true')
-
+    parser.add_argument('--sorted_inference', action='store_true')
     return parser

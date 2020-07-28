@@ -1,17 +1,8 @@
-import sys
-import os
-
+import json
 from collections import defaultdict
+
 import numpy as np
 import pandas as pd
-import json
-import sklearn
-import sys
-import os
-
-import networkx as nx
-from networkx.readwrite import json_graph
-from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, MultiLabelBinarizer
 
 
 class DataCenter(object):
@@ -20,6 +11,15 @@ class DataCenter(object):
     def __init__(self, config):
         super(DataCenter, self).__init__()
         self.config = config
+
+    def get_train_features(self, dataset):
+        if dataset == "reddit":
+            reddit_feats = np.load(self.config['file_path.reddit_feats'])
+            from sklearn.preprocessing import StandardScaler
+            scaler = StandardScaler()
+            scaler.fit(reddit_feats)
+            reddit_feats = scaler.transform(reddit_feats)
+            return reddit_feats
 
     def load_dataSet(self, dataset='cora'):
         if dataset == 'cora':

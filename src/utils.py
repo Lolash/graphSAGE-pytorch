@@ -56,7 +56,7 @@ def train_gap(nodes_ids, features, graphSage, classification, ds, adj_list, num_
             loss = get_gap_loss(adj_list, bal_coeff, classification, cut_coeff, embs_batch, nodes_batch, num_classes,
                                 device, epoch=epoch, step=index + 1, num_steps=batches, tensorboard=tensorboard)
             print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}, Dealed Nodes [{}/{}] '.format(epoch + 1, epochs, index,
-                                                                                            batches, loss.item(),
+                                                                                            batches, loss,
                                                                                             len(visited_nodes),
                                                                                             len(train_nodes)))
             loss.backward()

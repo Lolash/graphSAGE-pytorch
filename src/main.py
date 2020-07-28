@@ -119,7 +119,7 @@ if __name__ == '__main__':
 
     # val_nodes = [i for i in range(0, 2708)]
     if args.learn_method == "sup_edge":
-        if ds not in ["fb", "reddit", "twitch"]:
+        if ds not in ["fb", "reddit", "twitch", "deezer"]:
             raise Exception("You have to specify edge-based dataset.")
         print("TRAIN SUP EDGE")
         train_edges = getattr(dataCenter, ds + "_train_edges")

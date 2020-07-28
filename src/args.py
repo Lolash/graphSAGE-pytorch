@@ -34,4 +34,6 @@ def parser():
 
     parser.add_argument('--only_edges', action='store_true')
     parser.add_argument('--sorted_inference', action='store_true')
+
+    parser.add_argument('--num_processes', type=int, default=1)
     return parser

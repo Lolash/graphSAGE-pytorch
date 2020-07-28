@@ -8,6 +8,7 @@ from src.dataCenter import *
 from src.models import *
 from src.partition import partition_graph, partition_edge_stream_assign_edges
 from src.utils import *
+from torchsummary import summary
 
 print("RUN TRAINED")
 args = parser().parse_args()
@@ -52,6 +53,7 @@ np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 torch.cuda.manual_seed_all(args.seed)
 
+print(args)
 # load config file
 config = pyhocon.ConfigFactory.parse_file(args.config)
 
@@ -87,9 +89,30 @@ else:
     num_labels = args.num_classes
 classification.to(device)
 
+
+def count_trainable_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 graphSage_total_params = sum(p.numel() for p in graphSage.parameters())
 class_total_params = sum(p.numel() for p in classification.parameters())
 print("TOTAL MODEL PARAMS: {}".format(graphSage_total_params + class_total_params))
+print("TRAINABLE MODEL PARAMS: {}".format(
+    count_trainable_parameters(graphSage) + count_trainable_parameters(classification)))
+
+for name, param in graphSage.named_parameters():
+    print(name, param.data)
+    print(param.data.size())
+
+for name, param in classification.named_parameters():
+    print(name, param.data)
+    print(param.data.size())
+
+
+def processing_time_to_csv(processing_time, name):
+    processing_time = pd.DataFrame(processing_time)
+    processing_time.to_csv(filename + name + "_processing_time")
+
 
 if args.learn_method in ["unsup", "gap", "gap_plus", "sup_edge"]:
     if not args.only_edges:
@@ -110,19 +133,32 @@ if args.learn_method in ["unsup", "gap", "gap_plus", "sup_edge"]:
         train_edges = getattr(dataCenter, ds + "_train_edges")
         val_edges = getattr(dataCenter, ds + "_val_edges")
         test_edges = getattr(dataCenter, ds + "_test_edges")
-        partition_edge_stream_assign_edges(train_edges, adj_list_train, features_train, graphSage, classification, "train",
-                                           args)
-        partition_edge_stream_assign_edges(val_edges, adj_list_train, features_train, graphSage, classification, "val", args)
-        partition_edge_stream_assign_edges(test_edges, adj_list_train, features_train, graphSage, classification, "test",
-                                           args)
-    if ds in ["twitch"]:
+        train_processing_time = partition_edge_stream_assign_edges(train_edges, adj_list_train, features_train,
+                                                                   graphSage, classification,
+                                                                   "train-with-adj",
+                                                                   args)
+        processing_time_to_csv(train_processing_time, "TRAIN")
+        val_processing_time = partition_edge_stream_assign_edges(val_edges, adj_list_train, features_train, graphSage,
+                                                                 classification,
+                                                                 "val-with-adj", args)
+        processing_time_to_csv(val_processing_time, "VAL")
+
+        test_processing_time = partition_edge_stream_assign_edges(test_edges, adj_list_train, features_train, graphSage,
+                                                                  classification,
+                                                                  "test-with-adj",
+                                                                  args)
+        processing_time_to_csv(test_processing_time, "TEST")
+    if ds in ["twitch", "deezer"]:
         train_edges = getattr(dataCenter, ds + "_train_edges")
         val_edges = getattr(dataCenter, ds + "_val_edges")
         test_edges = getattr(dataCenter, ds + "_test_edges")
-        partition_edge_stream_assign_edges(train_edges, defaultdict(set), features_train, graphSage, classification, "train",
+        partition_edge_stream_assign_edges(train_edges, defaultdict(set), features_train, graphSage, classification,
+                                           "train-without-adj",
                                            args, True)
-        partition_edge_stream_assign_edges(val_edges, defaultdict(set), features_val, graphSage, classification, "val", args, True)
-        partition_edge_stream_assign_edges(test_edges, defaultdict(set), features_test, graphSage, classification, "test",
+        partition_edge_stream_assign_edges(val_edges, defaultdict(set), features_val, graphSage, classification,
+                                           "val-without-adj", args, True)
+        partition_edge_stream_assign_edges(test_edges, defaultdict(set), features_test, graphSage, classification,
+                                           "test-without-adj",
                                            args, True)
 
 else:

@@ -1,7 +1,9 @@
 import argparse
-import pandas as pd
 
-from src.partition import partition_hdrf, evaluate_edge_partitioning, hash_edge_partitioning
+import pandas as pd
+from tqdm import tqdm
+
+from src.hdrf import partition_hdrf, evaluate_edge_partitioning, hash_edge_partitioning
 
 parser = argparse.ArgumentParser(description='HDRF python implementation')
 
@@ -9,19 +11,22 @@ parser.add_argument('--input_file', type=str, default='')
 parser.add_argument('--num_classes', type=int)
 parser.add_argument('--load_imbalance', type=float, default=1)
 parser.add_argument('--output_file', type=str, default='')
+parser.add_argument('--max_state_size', type=int)
 
 args = parser.parse_args()
 
 print(args)
+
+
 def parse_reddit_edges(edges):
-    # parsed = []
-    for i, r in edges.iterrows():
+    parsed = []
+    for i, r in tqdm(edges.iterrows()):
         e = r["edge"]
         src = int(e.split(",")[0][1:])
         dst = int(e.split(",")[1][1:-1])
-        yield [src, dst]
-        # parsed.append([src, dst])
-    # return parsed
+        # yield [src, dst]
+        parsed.append([src, dst])
+    return parsed
 
 
 def parse_csv_edges(edges):
@@ -35,7 +40,7 @@ if "reddit" in args.input_file:
 else:
     edges = parse_csv_edges(pd.read_csv(args.input_file))
 
-partitions, processing_time = partition_hdrf(edges, args.num_classes, args.load_imbalance)
+partitions, processing_time = partition_hdrf(edges, args.num_classes, args.load_imbalance, args.max_state_size)
 
 result = []
 for label, labeled_edges in partitions.items():

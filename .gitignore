@@ -216,3 +216,7 @@ dmypy.json
 /reddit/
 /twitch/
 /deezer/
+/dataset/
+/papers100m/
+/models/
+/socialspammer/

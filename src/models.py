@@ -1,21 +1,17 @@
-import sys, os
+import random
 from collections import deque
 
 import torch
-import random
-
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 
 
 class Classification(nn.Module):
 
-    def __init__(self, emb_size, num_classes, device, gumbel=0, hid_size=64):
+    def __init__(self, emb_size, num_classes, device, hid_size=64):
         super(Classification, self).__init__()
 
         # self.weight = nn.Parameter(torch.FloatTensor(emb_size, num_classes))
-        self.gumbel = gumbel
         self.layer = nn.Sequential(
             nn.Linear(emb_size, hid_size),
             nn.ReLU(),
@@ -33,53 +29,8 @@ class Classification(nn.Module):
 
     def forward(self, embeds):
         logists = torch.softmax(self.layer(embeds), 1)
-        if self.gumbel != 0:
-            logists = self.gumbel_softmax(logists, 1.5, True)
-        # print(logists)
-        return logists.to(self.device)
+        return logists
 
-    def sample_gumbel(self, shape, eps=1e-20):
-        U = torch.rand(shape)
-        U.to(self.device)
-        return -Variable(torch.log(-torch.log(U + eps) + eps))
-
-    def gumbel_softmax_sample(self, logits, temperature, beta=1.0):
-        y = logits + beta * self.sample_gumbel(logits.size())
-        return F.softmax(y / temperature, dim=-1)
-
-    def gumbel_softmax(self, logits, temp, hard=False, beta=1.0):
-        """
-        input: [*, n_class]
-        return: [*, n_class] an one-hot vector
-        """
-        y = self.gumbel_softmax_sample(logits, temp, beta)
-        shape = y.size()
-        _, ind = y.max(dim=-1)
-        y_hard = torch.zeros_like(y).view(-1, shape[-1])
-        y_hard.to(self.device)
-        y_hard.scatter_(1, ind.view(-1, 1), 1)
-        y_hard = y_hard.view(*shape)
-        if hard:
-            return (y_hard - y).detach() + y
-        else:
-            return y
-
-
-# class Classification(nn.Module):
-
-# 	def __init__(self, emb_size, num_classes):
-# 		super(Classification, self).__init__()
-
-# 		self.weight = nn.Parameter(torch.FloatTensor(emb_size, num_classes))
-# 		self.init_params()
-
-# 	def init_params(self):
-# 		for param in self.parameters():
-# 			nn.init.xavier_uniform_(param)
-
-# 	def forward(self, embeds):
-# 		logists = torch.log_softmax(torch.mm(embeds,self.weight), 1)
-# 		return logists
 
 class UnsupervisedLoss(object):
     """docstring for UnsupervisedLoss"""
@@ -87,11 +38,7 @@ class UnsupervisedLoss(object):
     def __init__(self, adj_lists, train_nodes, device):
         super(UnsupervisedLoss, self).__init__()
         self.Q = 10
-        # 24.03.2020 15:54 I change this from 6 to 2 - worse results
-        # 16:02 I increase from 6 to 8
         self.N_WALKS = 6
-        # 24.03.2020 15:13 I change this from 1 to 2 - better than bfs
-        # 15:34 I change this from 2 to 3 - slight improvement
         self.WALK_LEN = 3
         self.N_WALK_LEN = 3
         self.MARGIN = 3
@@ -145,41 +92,6 @@ class UnsupervisedLoss(object):
         if len(nodes_score) == 0:
             print("NO NODES SCORE")
         loss = torch.mean(torch.cat(nodes_score, 0))
-
-        return loss
-
-    def get_loss_margin(self, embeddings, nodes):
-        assert len(embeddings) == len(self.unique_nodes_batch)
-        assert False not in [nodes[i] == self.unique_nodes_batch[i] for i in range(len(nodes))]
-        node2index = {n: i for i, n in enumerate(self.unique_nodes_batch)}
-
-        nodes_score = []
-        assert len(self.node_positive_pairs) == len(self.node_negtive_pairs)
-        for node in self.node_positive_pairs:
-            pps = self.node_positive_pairs[node]
-            nps = self.node_negtive_pairs[node]
-            if len(pps) == 0 or len(nps) == 0:
-                continue
-
-            indexs = [list(x) for x in zip(*pps)]
-            node_indexs = [node2index[x] for x in indexs[0]]
-            neighb_indexs = [node2index[x] for x in indexs[1]]
-            pos_score = F.cosine_similarity(embeddings[node_indexs], embeddings[neighb_indexs])
-            pos_score, _ = torch.min(torch.log(torch.sigmoid(pos_score)), 0)
-
-            indexs = [list(x) for x in zip(*nps)]
-            node_indexs = [node2index[x] for x in indexs[0]]
-            neighb_indexs = [node2index[x] for x in indexs[1]]
-            neg_score = F.cosine_similarity(embeddings[node_indexs], embeddings[neighb_indexs])
-            neg_score, _ = torch.max(torch.log(torch.sigmoid(neg_score)), 0)
-
-            nodes_score.append(
-                torch.max(torch.tensor(0.0).to(self.device), neg_score - pos_score + self.MARGIN).view(1, -1))
-        # nodes_score.append((-pos_score - neg_score).view(1,-1))
-
-        loss = torch.mean(torch.cat(nodes_score, 0), 0)
-
-        # loss = -torch.log(torch.sigmoid(pos_score))-4*torch.log(torch.sigmoid(-neg_score))
 
         return loss
 
@@ -241,8 +153,6 @@ class UnsupervisedLoss(object):
                     cur_pairs.append((i, nb))
                 self.node_positive_pairs[i] = cur_pairs
         return self.positive_pairs
-
-
 
     def _run_random_walks(self, nodes):
         for node in nodes:

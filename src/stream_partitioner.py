@@ -44,7 +44,24 @@ def _partition_one_batch(adj_list, edges_batch, bidirectional, features_batch, f
             added_edges.add((e[1], e[0]))
     with torch.no_grad():
         if learn_method == "sup_edge":
-            pass
+            srcs = [item for item in map(lambda e: e[0], edges_batch)]
+            dsts = [item for item in map(lambda e: e[1], edges_batch)]
+            srcs_embs = graphsage(srcs, features_batch, adj_list)
+            dsts_embs = graphsage(dsts, features_batch, adj_list)
+            embs = torch.cat([srcs_embs, dsts_embs], 1)
+            predicts = gap(embs)
+            _, max_idx = torch.max(predicts, dim=1)
+            max_idx = max_idx.squeeze().tolist()
+            n = 0
+            while n < len(srcs_embs):
+                num_assignments += 1
+                perfect_load = num_assignments / num_partitions
+                if sorted_inference:
+                    p = _get_sorted_edge_inference(freqs, max_load, perfect_load, predicts[n])
+                else:
+                    p = _get_least_loaded_edge_inference(freqs, max_load, perfect_load, max_idx[n])
+                assignments.append([srcs[n], dsts[n], p])
+                n += 1
         else:
             pairs = [item for sublist in map(lambda e: [e[0], e[1]], edges_batch) for item in sublist]
             embs = graphsage(pairs, features_batch, adj_list)
@@ -58,7 +75,7 @@ def _partition_one_batch(adj_list, edges_batch, bidirectional, features_batch, f
                 num_assignments += 1
                 perfect_load = num_assignments / num_partitions
                 if sorted_inference:
-                    p = _get_sorted_inference(freqs, max_load, perfect_load, predicts)
+                    p = _get_sorted_inference(freqs, max_load, perfect_load, predicts[n:n + 2])
                 else:
                     p = _get_least_loaded_inference(freqs, max_load, perfect_load, max_val[n:n + 2],
                                                     max_idx[n:n + 2])
@@ -125,6 +142,29 @@ def _get_least_loaded_inference(freqs, max_load, perfect_load, max_val, max_idx)
     freqs[p] += 1
     return p
 
+
+def _get_sorted_edge_inference(freqs, max_load, perfect_load, predicts):
+    sorted_values, sorted_partitions = torch.sort(predicts, descending=True)
+    for p in sorted_partitions.flatten().split(1):
+        p = p.item()
+        freqs[p] += 1
+        if get_load_value(freqs, perfect_load) < max_load:
+            return p
+        else:
+            freqs[p] -= 1
+    p = freqs.index(min(freqs))
+    freqs[p] += 1
+    return p
+
+def _get_least_loaded_edge_inference(freqs, max_load, perfect_load, max_idx):
+    freqs[max_idx] += 1
+    if get_load_value(freqs, perfect_load) < max_load:
+        return max_idx
+    else:
+        freqs[max_idx] -= 1
+    p = freqs.index(min(freqs))
+    freqs[p] += 1
+    return p
 
 def get_load_value(freqs, perfect_load):
     return max(freqs) / perfect_load

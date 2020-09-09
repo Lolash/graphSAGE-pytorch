@@ -1,4 +1,3 @@
-import time
 from datetime import datetime
 
 import pyhocon
@@ -10,15 +9,13 @@ from src.models import *
 from src.utils import *
 
 args = parser().parse_args()
-filename = "ds-{}_{}_mb-{}_e-{}_se-{}_smb-{}_inf-mb-{}_gumbel-{}_cut-{}_bal-{}_agg-{}-num_classes-{}-bfs-{}-lr-{}-{}.dot".format(
-    args.dataSet,
+filename = "ds-{}_{}_mb-{}_e-{}_se-{}_smb-{}_cut-{}_bal-{}_agg-{}-num_classes-{}-bfs-{}-lr-{}-{}.dot".format(
+    args.dataset,
     args.learn_method,
     args.b_sz,
     args.epochs,
     args.sup_epochs,
     args.sup_b_sz,
-    args.inf_b_sz,
-    args.gumbel,
     args.cut_coeff,
     args.bal_coeff,
     args.agg_func,
@@ -36,7 +33,6 @@ if torch.cuda.is_available():
         print('using device', device_id, torch.cuda.get_device_name(device_id))
 
 device = torch.device("cuda" if args.cuda else "cpu")
-# device = torch.device("cpu")
 print('DEVICE:', device)
 if __name__ == '__main__':
     print(args)
@@ -51,18 +47,13 @@ if __name__ == '__main__':
     config = pyhocon.ConfigFactory.parse_file(args.config)
 
     # load data
-    ds = args.dataSet
+    ds = args.dataset
     dataCenter = DataCenter(config)
     dataCenter.load_dataSet(ds)
+
     train_features = torch.from_numpy(getattr(dataCenter, ds + '_feats_train')).to(device)
     train_adj_list = getattr(dataCenter, ds + '_adj_list_train')
-
     train_nodes = getattr(dataCenter, ds + "_train")
-
-    if ds in ["fb", "reddit"]:
-        train_edges = getattr(dataCenter, ds + "_train_edges")
-        val_edges = getattr(dataCenter, ds + "_val_edges")
-        test_edges = getattr(dataCenter, ds + "_test_edges")
 
     gnn_num_layers = config['setting.num_layers']
     gnn_emb_size = config['setting.hidden_emb_size']
@@ -88,38 +79,24 @@ if __name__ == '__main__':
     if classification is None:
         if args.learn_method == "sup_edge":
             print("DOUBLE EMB SIZE")
-            classification = Classification(gnn_emb_size * 2, args.num_classes, device=device, gumbel=args.gumbel)
+            classification = Classification(gnn_emb_size * 2, args.num_classes, device=device)
         else:
-            classification = Classification(gnn_emb_size, args.num_classes, device=device, gumbel=args.gumbel)
+            classification = Classification(gnn_emb_size, args.num_classes, device=device)
 
     graphSage.to(device)
     classification.to(device)
 
     unsupervised_loss = UnsupervisedLoss(train_adj_list, train_nodes, device)
-    best_val_loss = None
-    best_val_models = [graphSage, classification]
     for epoch in range(args.epochs):
         print('----------------------EPOCH %d-----------------------' % epoch)
         graphSage, classification = apply_model(nodes=train_nodes, features=train_features, graphSage=graphSage,
                                                 classification=classification,
                                                 unsupervised_loss=unsupervised_loss, adj_list=train_adj_list, args=args,
-                                                epoch=epoch, tensorboard=tensorboard, device=device)
-        # if (epoch + 1) % 2 == 0 and args.learn_method == 'unsup':
-        #     classification, args.max_vali_f1 = train_classification(dataCenter, graphSage, classification, ds, device,
-        #                                                             args.max_vali_f1, args.name)
-        # if args.learn_method != 'unsup':
-        # val_nodes = getattr(dataCenter, ds + "_val")
-        # val_gap_loss = evaluate(adj_list_val, val_nodes, features, graphSage, gap, device, args)
-        # if best_val_loss is None or best_val_loss > val_gap_loss:
-        #     best_val_models = [graphSage, gap]
-        # if args.b_sz > 0:
-        #     tensorboard.add_scalar("val_gap_loss", val_gap_loss.item(), global_step=epoch*args.b_sz)
-        # else:
-        #     tensorboard.add_scalar("val_gap_loss", val_gap_loss.item(), global_step=epoch)
+                                                epoch=epoch, tensorboard=tensorboard, device=device,
+                                                num_steps=args.num_steps)
 
-    # val_nodes = [i for i in range(0, 2708)]
     if args.learn_method == "sup_edge":
-        if ds not in ["fb", "reddit", "twitch", "deezer"]:
+        if ds not in ["reddit", "twitch", "deezer"]:
             raise Exception("You have to specify edge-based dataset.")
         print("TRAIN SUP EDGE")
         train_edges = getattr(dataCenter, ds + "_train_edges")
@@ -135,4 +112,3 @@ if __name__ == '__main__':
     models = [graphSage, classification]
     torch.save(graphSage, filename + ".GRAPHSAGE.torch")
     torch.save(models, filename + ".torch")
-    torch.save(best_val_models, filename + "BEST-VAL-MODELS.torch")

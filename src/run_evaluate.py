@@ -1,6 +1,5 @@
 import argparse
 from collections import defaultdict
-
 import pandas as pd
 
 parser = argparse.ArgumentParser(description='HDRF python implementation')
@@ -32,13 +31,13 @@ nodes_assignments = defaultdict(set)
 freqs = [0] * args.num_classes
 edges_number = 0
 for batch in pd.read_csv(args.input_file, chunksize=args.chunk_size):
+    print(edges_number)
     edges_assignments = batch.values.tolist()
     edges_number += len(edges_assignments)
     parse_one_batch(edges_assignments, nodes_assignments, freqs)
-
-vertex_copies = sum([len(copies) for copies in nodes_assignments.values()])
-print("FREQS: {}".format(freqs))
-normalized_load = max(freqs) / (edges_number // args.num_classes)
-print("NORMALIZED LOAD: {}".format(normalized_load))
-replication_factor = vertex_copies / len(nodes_assignments)
-print("REPLICATION FACTOR: {}".format(replication_factor))
+    vertex_copies = sum([len(copies) for copies in nodes_assignments.values()])
+    print("FREQS: {}".format(freqs))
+    normalized_load = max(freqs) / (edges_number // args.num_classes)
+    print("NORMALIZED LOAD: {}".format(normalized_load))
+    replication_factor = vertex_copies / len(nodes_assignments)
+    print("REPLICATION FACTOR: {}".format(replication_factor))

@@ -1,4 +1,5 @@
 import argparse
+from collections import defaultdict
 
 import pandas as pd
 from tqdm import tqdm
@@ -35,15 +36,24 @@ def parse_csv_edges(edges):
     return edges
 
 
-if "reddit" in args.input_file:
-    edges = parse_reddit_edges(pd.read_csv(args.input_file))
-else:
-    edges = parse_csv_edges(pd.read_csv(args.input_file))
+def parse_chunk(chunk):
+    if "reddit" in args.input_file:
+        return parse_reddit_edges(chunk)
+    else:
+        return parse_csv_edges(chunk)
 
-partitions, processing_time = partition_hdrf(edges, args.num_classes, args.load_imbalance, args.max_state_size)
+
+partial_degrees = defaultdict(lambda: 0)
+edge_partitions = {c: set() for c in range(args.num_classes)}
+vertex_partitions = {c: set() for c in range(args.num_classes)}
+is_header = "infer" if "reddit" in args.input_file else None
+for chunk in pd.read_csv(args.input_file, header=is_header, chunksize=50000):
+    edges = parse_chunk(chunk)
+    partition_hdrf(edges, args.num_classes, args.load_imbalance, partial_degrees, edge_partitions,
+                   vertex_partitions, args.max_state_size)
 
 result = []
-for label, labeled_edges in partitions.items():
+for label, labeled_edges in edge_partitions.items():
     for e in labeled_edges:
         result.append({"src": e[0], "dst": e[1], "label": label})
 
@@ -53,11 +63,10 @@ if args.output_file == "":
 else:
     output_file = args.output_file
 assigned_edges.to_csv(output_file, index=False)
-processing_time = pd.DataFrame(processing_time)
-processing_time.to_csv(output_file + "_processing_time")
 
-evaluate_edge_partitioning([e for s in partitions.values() for e in s], [p for p in partitions for _ in partitions[p]],
+evaluate_edge_partitioning([e for s in edge_partitions.values() for e in s],
+                           [p for p in edge_partitions for _ in edge_partitions[p]],
                            "HDRF", args.num_classes)
 
-hash_partitions = hash_edge_partitioning(edges, "HASH", args.num_classes)
-evaluate_edge_partitioning(edges, hash_partitions, "HASH", args.num_classes)
+hash_partitions = hash_edge_partitioning([e for s in edge_partitions.values() for e in s], "HASH", args.num_classes)
+evaluate_edge_partitioning([e for s in edge_partitions.values() for e in s], hash_partitions, "HASH", args.num_classes)

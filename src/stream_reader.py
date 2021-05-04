@@ -17,7 +17,7 @@ def read_batches_to_queue(file_path, batch_size, queue: Queue):
             edges = edges_list
         if len(edges) > 0:
             try:
-                queue.put(edges, block=True)
+                queue.put((edges, None, None), block=True)
             except Full:
                 print("Timeout during writing to READING queue.")
                 return

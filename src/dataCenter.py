@@ -1,6 +1,5 @@
 import json
 from collections import defaultdict
-from ogb.nodeproppred import NodePropPredDataset
 
 import numpy as np
 import pandas as pd
@@ -13,20 +12,20 @@ class DataCenter(object):
         super(DataCenter, self).__init__()
         self.config = config
 
-    def get_train_features(self, dataset):
+    def get_train_features(self, dataset, path):
         if dataset == "reddit":
-            reddit_feats = np.load(self.config['file_path.reddit_feats'])
+            reddit_feats = np.load(path)
             from sklearn.preprocessing import StandardScaler
             scaler = StandardScaler()
             scaler.fit(reddit_feats)
             reddit_feats = scaler.transform(reddit_feats)
             return reddit_feats
-        elif dataset == "arxiv":
-            data = NodePropPredDataset(name="ogbn-arxiv")
-            graph, _ = data[0]  # graph: library-agnostic graph object
-            return graph["node_feat"]
+        # elif dataset == "arxiv":
+        #     data = NodePropPredDataset(name="ogbn-arxiv")
+        #     graph, _ = data[0]  # graph: library-agnostic graph object
+        #     return graph["node_feat"]
         elif dataset == "papers100m":
-            node_feat = pd.read_csv(self.config['file_path.papers100m_feats'], header=None).values
+            node_feat = pd.read_csv(path, header=None).values
             if 'int' in str(node_feat.dtype):
                 node_feat = node_feat.astype(np.int64)
             else:
@@ -34,9 +33,27 @@ class DataCenter(object):
                 node_feat = node_feat.astype(np.float32)
             return node_feat
         elif dataset == "bitcoin":
-            features = pd.read_csv(self.config['file_path.bitcoin_feats_no_ids'], header=None)
+            features = pd.read_csv(path, header=None)
             return features.values.astype(np.float32)
-
+        elif dataset == "twitch":
+            feature_dim = 3170  # maximum feature id of all twitch datasets
+            features_raw = json.load(open(path))
+            node2idx = {}
+            features = []
+            for i, it in enumerate(features_raw.items()):
+                node2idx[int(it[0])] = i
+                feats = np.zeros(feature_dim)
+                feats[[int(val) for val in it[1]]] = 1
+                features.append(feats)
+            features = np.asarray([np.asarray(f) for f in features])
+            return features
+        elif dataset == "deezer":
+            deezer_feats = np.load(path)
+            return deezer_feats
+        elif dataset == "generated":
+            generated_feats = pd.read_csv(path, header=None).values.astype(
+                np.float32)
+            return generated_feats
         else:
             raise Exception("Unknown dataset")
 
@@ -52,18 +69,18 @@ class DataCenter(object):
                 adj_train[src].add(dst)
 
             return adj_train
-        elif dataset == "arxiv":
-            data = NodePropPredDataset(name="ogbn-arxiv")
-
-            split_idx = data.get_idx_split()
-            train_idx = set(split_idx["train"])
-            graph, label = data[0]  # graph: library-agnostic graph object
-            adj_list_train = defaultdict(set)
-            # we limit the training dataset to first 10k edges
-            for src, dst in zip(graph['edge_index'][0][:10000], graph['edge_index'][1][:10000]):
-                if src in train_idx and dst in train_idx:
-                    adj_list_train[src].add(dst)
-            return adj_list_train
+        # elif dataset == "arxiv":
+        #     data = NodePropPredDataset(name="ogbn-arxiv")
+        #
+        #     split_idx = data.get_idx_split()
+        #     train_idx = set(split_idx["train"])
+        #     graph, label = data[0]  # graph: library-agnostic graph object
+        #     adj_list_train = defaultdict(set)
+        #     # we limit the training dataset to first 10k edges
+        #     for src, dst in zip(graph['edge_index'][0][:10000], graph['edge_index'][1][:10000]):
+        #         if src in train_idx and dst in train_idx:
+        #             adj_list_train[src].add(dst)
+        #     return adj_list_train
         elif dataset == "papers100m":
             edge_file = self.config['file_path.papers100m_edges']
             nodes_file = self.config['file_path.papers100m_nodes']
@@ -99,6 +116,21 @@ class DataCenter(object):
 
             for e in edges:
                 adj_list[node2idx[e[0]]].add(node2idx[e[1]])
+            return adj_list
+        elif dataset == "twitch":
+            twitch_feature_file = self.config['file_path.twitch_feats']
+            twitch_edge_file = self.config['file_path.twitch_edges']
+            adj_list, _, _, _ = self.get_twitch_data(twitch_edge_file, twitch_feature_file)
+            return adj_list
+        elif dataset == "generated":
+            edge_file = self.config['file_path.generated_edges']
+
+            edges = pd.read_csv(edge_file).values.tolist()
+            adj_list = defaultdict(set)
+
+            for e in edges:
+                adj_list[e[0]].add(e[1])
+                adj_list[e[1]].add(e[0])
             return adj_list
         else:
             raise Exception("Unknown dataset")
@@ -143,33 +175,33 @@ class DataCenter(object):
             setattr(self, dataset + '_train_edges', train_edges)
             setattr(self, dataset + '_edge_labels', train_labels)
 
-        elif dataset == 'arxiv':
-            data = NodePropPredDataset(name="ogbn-arxiv")
-
-            split_idx = data.get_idx_split()
-            train_idx = set(split_idx["train"])
-            graph, label = data[0]  # graph: library-agnostic graph object
-            # print(graph)
-            adj_list_train = defaultdict(set)
-            test_edges = []
-            # we limit the training dataset to first 10k edges
-            for src, dst in zip(graph['edge_index'][0][:10000], graph['edge_index'][1][:10000]):
-                if src in train_idx and dst in train_idx:
-                    adj_list_train[src].add(dst)
-
-            for src, dst in zip(graph['edge_index'][0], graph['edge_index'][1]):
-                test_edges.append([src, dst])
-
-            print(adj_list_train)
-            features = graph["node_feat"]
-
-            setattr(self, dataset + '_train', [int(n) for n in adj_list_train.keys()])
-            setattr(self, dataset + '_feats_train', features)
-            setattr(self, dataset + '_adj_list_train', adj_list_train)
+        # elif dataset == 'arxiv':
+        #     data = NodePropPredDataset(name="ogbn-arxiv")
+        #
+        #     split_idx = data.get_idx_split()
+        #     train_idx = set(split_idx["train"])
+        #     graph, label = data[0]  # graph: library-agnostic graph object
+        #     # print(graph)
+        #     adj_list_train = defaultdict(set)
+        #     test_edges = []
+        #     # we limit the training dataset to first 10k edges
+        #     for src, dst in zip(graph['edge_index'][0][:10000], graph['edge_index'][1][:10000]):
+        #         if src in train_idx and dst in train_idx:
+        #             adj_list_train[src].add(dst)
+        #
+        #     for src, dst in zip(graph['edge_index'][0], graph['edge_index'][1]):
+        #         test_edges.append([src, dst])
+        #
+        #     print(adj_list_train)
+        #     features = graph["node_feat"]
+        #
+        #     setattr(self, dataset + '_train', [int(n) for n in adj_list_train.keys()])
+        #     setattr(self, dataset + '_feats_train', features)
+        #     setattr(self, dataset + '_adj_list_train', adj_list_train)
 
         elif dataset == 'papers100m':
             edge_file = self.config['file_path.papers100m_edges']
-            features = self.get_train_features("papers100m")
+            features = self.get_train_features("papers100m", self.config['file_path.papers100m_feats'])
             nodes_file = self.config['file_path.papers100m_nodes']
             node2idx = {}
             # print(features[0])
@@ -215,6 +247,21 @@ class DataCenter(object):
             setattr(self, dataset + '_feats_train', features)
             setattr(self, dataset + '_adj_list_train', adj_list)
 
+        elif dataset == "generated":
+            edge_file = self.config['file_path.generated_edges']
+            features = pd.read_csv(self.config['file_path.generated_feats'], header=None).values.astype(np.float32)
+
+            edges = pd.read_csv(edge_file).values.tolist()
+            adj_list = defaultdict(set)
+
+            for e in edges:
+                adj_list[e[0]].add(e[1])
+                adj_list[e[1]].add(e[0])
+
+            setattr(self, dataset + '_train', [int(n) for n in adj_list.keys()])
+            setattr(self, dataset + '_feats_train', features)
+            setattr(self, dataset + '_adj_list_train', adj_list)
+
     def get_deezer_data(self, deezer_edge_file, deezer_feature_file, deezer_edge_labels=None):
         deezer_edges = pd.read_csv(deezer_edge_file)
         deezer_feats = np.load(deezer_feature_file)
@@ -243,7 +290,6 @@ class DataCenter(object):
         features_raw = json.load(open(twitch_feature_file))
         node2idx = {}
         features = []
-        raw_values = [i for v in features_raw.values() for i in v]
         for i, it in enumerate(features_raw.items()):
             node2idx[int(it[0])] = i
             feats = np.zeros(feature_dim)

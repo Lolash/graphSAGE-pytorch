@@ -6,15 +6,11 @@ import torch
 from tqdm import tqdm
 
 
-def partition_hdrf(edges, num_classes, load_imbalance, max_state_size=None):
+def partition_hdrf(edges, num_classes, load_imbalance, partial_degrees, edge_partitions, vertex_partitions, max_state_size=None):
     print("START HDRF PARTITIONING")
     print("MAX STATE SIZE: ", max_state_size)
-    partial_degrees = defaultdict(lambda: 0)
-    edge_partitions = {c: set() for c in range(num_classes)}
-    vertex_partitions = {c: set() for c in range(num_classes)}
     max_size = 0
     min_size = 0
-    processing_time = []
     idx = 0
     for src, dst in tqdm(edges):
         if idx == 0:
@@ -29,7 +25,6 @@ def partition_hdrf(edges, num_classes, load_imbalance, max_state_size=None):
             if max_hdrf < hdrf(src, dst, ep[1], vp[1], partial_degrees, max_size, min_size, load_imbalance):
                 max_hdrf = cur_hdrf
                 max_p = ep[0]
-
         edge_partitions[max_p].add((src, dst))
         vertex_partitions[max_p].add(src)
         vertex_partitions[max_p].add(dst)
@@ -45,17 +40,18 @@ def partition_hdrf(edges, num_classes, load_imbalance, max_state_size=None):
         min_size = temp_min_size
         if idx > 0 and idx % 10000 == 0:
             end_time = time.time()
-            processing_time.append([idx, end_time - start_time])
+            # processing_time.append([idx, end_time - start_time])
+            print("\nPROCESSING TIME: ", end_time - start_time)
         if max_state_size is not None and get_size(vertex_partitions) + get_size(partial_degrees) > max_state_size:
             print("CLEAR!")
             vertex_partitions = {c: set() for c in range(num_classes)}
             partial_degrees.clear()
         idx += 1
 
-    print("SIZE OF VERTEX PARTITIONS: ", get_size(vertex_partitions))
-    print("SIZE OF EDGE PARTITIONS: ", get_size(edge_partitions))
+    # print("SIZE OF VERTEX PARTITIONS: ", get_size(vertex_partitions))
+    # print("SIZE OF EDGE PARTITIONS: ", get_size(edge_partitions))
 
-    return edge_partitions, processing_time
+    return edge_partitions
 
 
 def hdrf(v1, v2, ep, vp, partial_degrees, max_size, min_size, load_imbalance, eps=1):
